@@ -7,7 +7,7 @@
 #INCLUDE "..\DXLib\direct2dlib.inc"
 #INCLUDE ONCE "commdlg.inc"
 
-%COMPILE_VERSION = 1007
+%COMPILE_VERSION = 1008
 $CONFIGFILE = "bi2ed.ini"
 $spx = CHR$(8,10,10,12,14,16,16,18,20,22,22,24,24,22,22,20,18,16,16,14,12,10,10,8)
 $playercolors = CHR$(16,104,56,32,48,64,80)
@@ -52,8 +52,9 @@ $CUSTOMMSGIDS = "USER00;USER01;USER02;USER03;USER04;USER05;USER06;USER07;USER08;
 %WORDSTART_VALIDATION = 160
 %WORDSTART_MAPINFO = 170
 %WORDSTART_BONUSCONDITION = 180
-%WORDSTART_WELCOME = 190
-%WORDSTART_MESSAGES = 220
+%WORDSTART_ERROR=190
+%WORDSTART_WELCOME = 200
+%WORDSTART_MESSAGES = 230
 
 %DIALOGUE_PROPERTIES = 1
 %DIALOGUE_ACTIONS = 2
@@ -93,7 +94,8 @@ END TYPE
 GLOBAL D2D AS IDIRECT2D
 GLOBAL pWindow AS IWindow
 GLOBAL EXEPATH$, apperror&, compileDate$
-GLOBAL configdata$, selectedLanguage&, reopenLastMap&, bi2020support&, words$()
+GLOBAL configdata$, selectedLanguage&, reopenLastMap&, bi2020support&, isBI3&, words$()
+GLOBAL libFolder$, misFolder$
 GLOBAL hWIN&, hOldWinProc&, hOldGfxWinProc&
 GLOBAL hTEXTFONT&, hMINIFONT&, hBUTTONFONT&, hBIGFONT&
 GLOBAL mousexpos&, mouseypos&
@@ -252,6 +254,7 @@ FUNCTION GETWORDINDEX&(BYVAL a$)
   CASE "SPRITEINFO": IF nr& > 0 AND nr& <= 5 THEN i& = %WORDSTART_SPRITEINFO+nr&-1
   CASE "VALIDATION": IF nr& > 0 AND nr& <= 5 THEN i& = %WORDSTART_VALIDATION+nr&-1
   CASE "MAPINFO": IF nr& > 0 AND nr& <= 2 THEN i& = %WORDSTART_MAPINFO+nr&-1
+  CASE "ERROR": IF nr& > 0 AND nr& <= 4 THEN i& = %WORDSTART_ERROR+nr&-1
   CASE "WELCOME": IF nr& > 0 AND nr& <= 24 THEN i& = %WORDSTART_WELCOME+nr&-1
   CASE "MESSAGE": IF nr& > 0 AND nr& <= 99 THEN i& = %WORDSTART_MESSAGES+nr&-1
   END SELECT
@@ -274,7 +277,6 @@ FUNCTION READCONFIG&
   REPLACE CHR$(9) WITH CHR$(32) IN a$
   m& = LEN(a$)
   IF m& = 0 THEN EXIT FUNCTION
-
 
   'Datei auswerten
   p& = 1
@@ -309,6 +311,12 @@ FUNCTION READCONFIG&
               reopenLastMap& = b$ <> ""
             CASE "BI2020":
               IF b$ <> "" AND b$ <> "0" THEN bi2020support& = -1
+            CASE "LIBFOLDER":
+              libFolder$ = b$
+              IF libFolder$ <> "" AND RIGHT$(libFolder$, 1) <> "\" THEN libFolder$ = libFolder$+"\"
+            CASE "MISFOLDER":
+              misFolder$ = b$
+              IF misFolder$ <> "" AND RIGHT$(misFolder$, 1) <> "\" THEN misFolder$ = misFolder$+"\"
             END SELECT
 
           CASE 2:  'Sprachen
@@ -319,6 +327,9 @@ FUNCTION READCONFIG&
       END IF
     END IF
   WEND
+
+  IF libFolder$ = "" THEN libFolder$ = GetFolderLocation$(EXEPATH$, "LIB")
+  IF misFolder$ = "" THEN misFolder$ = GetFolderLocation$(EXEPATH$, "MIS")
 
   READCONFIG& = 1
 END FUNCTION
@@ -334,6 +345,8 @@ SUB SAVECONFIG
   CALL REPLACESETTING("SETTINGS", "LANGUAGE", MID$("GERENG", selectedLanguage&*3+1, 3))
   CALL REPLACESETTING("SETTINGS", "REOPEN", IIF$(reopenLastMap&, missionFileName$, ""))
   CALL REPLACESETTING("SETTINGS", "BI2020", FORMAT$(ABS(bi2020support&)))
+  CALL REPLACESETTING("SETTINGS", "LIBFOLDER", libFolder$)
+  CALL REPLACESETTING("SETTINGS", "MISFOLDER", misFolder$)
 
   CALL SAVEFILE(EXEPATH$+$CONFIGFILE, configdata$)
 END SUB
@@ -582,9 +595,15 @@ SUB POPULATEACTIONPARAMLISTBOX(BYVAL actionNr&)
       IF a$ <> "" THEN a$ = a$+";"
       a$ = a$+LEFT$(GETWORD$(%WORDSTART_MESSAGES+i&), 17)
     NEXT i&
-    IF totalUnitClasses& > 54 THEN
+    IF isBI3& = 0 THEN
+      IF totalUnitClasses& > 54 THEN
+        FOR i& = 99 TO 154
+          a$ = a$+";EDT"+FORMAT$(i&, "000")
+        NEXT i&
+      END IF
+    ELSE
       FOR i& = 99 TO 154
-        a$ = a$+";EDT"+FORMAT$(i&, "000")
+        a$ = a$+";VIDEO"+FORMAT$(i&, "000")
       NEXT i&
     END IF
     listboxParam1.SetItems(a$)
@@ -709,7 +728,7 @@ FUNCTION GETNEXTGPM&(slotnr&, pl&)
     IF v& = 8 THEN v& = 9
     IF v& = 21 THEN v& = 22
     IF v& > 22 AND v& < 52 THEN v& = 52
-    IF v& > 54 THEN v& = 0
+    IF v& >= totalUnitClasses& OR v& > 63 THEN v& = 0
     duplicate& = 0
     FOR i& = 0 TO 12
       IF gpm?(i&, pl&) = v& THEN duplicate& = 1
@@ -1220,41 +1239,50 @@ END SUB
 
 'Missionsnamen initialisieren
 SUB INITMAPNAMES
-  LOCAL a$, n&
+  LOCAL a$, n&, i&
   REDIM mapnames$(40)
 
   IF bi2020support& <> 0 THEN
     'Datei einlesen
     a$ = READFILECONTENT$(EXEPATH$+"MIS\MAPCODES.TXT")
-    n& = TextToArray&(a$, mapnames$())
-    IF n& > 0 THEN EXIT SUB
+    IF a$ <> "" THEN
+      n& = TextToArray&(a$, mapnames$())
+      EXIT SUB
+    END IF
   END IF
 
-  mapnames$(0) = "AMPORGE"
-  mapnames$(1) = "JOGRWAI"
-  mapnames$(2) = "GEGIDOS"
-  mapnames$(3) = "WABODAE"
-  mapnames$(4) = "BUFASWE"
-  mapnames$(5) = "GEHAUWA"
-  mapnames$(7) = "OLARIBU"
-  mapnames$(8) = "FITORGE"
-  mapnames$(11) = "WABIKDO"
-  mapnames$(12) = "GEEUSAT"
-  mapnames$(15) = "KAIMAWA"
-  mapnames$(16) = "GEDEROM"
-  mapnames$(21) = "ULUARGE"
-  mapnames$(23) = "ABUNDWA"
-  mapnames$(25) = "WAFEFAL"
-  mapnames$(26) = "BUSALUG"
-  mapnames$(29) = "GEKEFZU"
-  mapnames$(31) = "DAFATWA"
-  mapnames$(32) = "SIETIBU"
-  mapnames$(39) = "LANADGE"
+  IF isBI3& = 0 THEN
+    mapnames$(0) = "AMPORGE"
+    mapnames$(1) = "JOGRWAI"
+    mapnames$(2) = "GEGIDOS"
+    mapnames$(3) = "WABODAE"
+    mapnames$(4) = "BUFASWE"
+    mapnames$(5) = "GEHAUWA"
+    mapnames$(7) = "OLARIBU"
+    mapnames$(8) = "FITORGE"
+    mapnames$(11) = "WABIKDO"
+    mapnames$(12) = "GEEUSAT"
+    mapnames$(15) = "KAIMAWA"
+    mapnames$(16) = "GEDEROM"
+    mapnames$(21) = "ULUARGE"
+    mapnames$(23) = "ABUNDWA"
+    mapnames$(25) = "WAFEFAL"
+    mapnames$(26) = "BUSALUG"
+    mapnames$(29) = "GEKEFZU"
+    mapnames$(31) = "DAFATWA"
+    mapnames$(32) = "SIETIBU"
+    mapnames$(39) = "LANADGE"
 
-  mapnames$(35) = "YETUDWA"
-  mapnames$(36) = "WAGOPAY"
-  mapnames$(37) = "ZAFLUGE"
-  mapnames$(40) = "SKATZWA"
+    mapnames$(35) = "YETUDWA"
+    mapnames$(36) = "WAGOPAY"
+    mapnames$(37) = "ZAFLUGE"
+    mapnames$(40) = "SKATZWA"
+  ELSE
+    REDIM mapnames$(20)
+    FOR i& = 1 TO 20
+      mapnames$(i&) = "BI3-"+FORMAT$(i&, "000")
+    NEXT i&
+  END IF
 END SUB
 
 
@@ -1434,12 +1462,21 @@ SUB INITBRUSHES
   brushRed& = D2D.CreateSolidBrush(255, 0, 0)
   brushGreen& = D2D.CreateSolidBrush(0, 128, 0)
   brushBorder& = D2D.CreateSolidBrush(16, 16, 16)
-  brushBackground& = D2D.CreateSolidBrush(224, 200, 160)
-  brushSelectedTab& = D2D.CreateSolidBrush(232, 208, 168)
-  brushHighlightedTab& = D2D.CreateSolidBrush(200, 178, 142)
-  brushInactiveTab& = D2D.CreateSolidBrush(150, 133, 106)
-  brushEditBackground& = D2D.CreateSolidBrush(112, 100, 80)
-  brushButton& = D2D.CreateSolidBrush(160, 143, 114)
+  IF isBI3& = 0 THEN
+    brushBackground& = D2D.CreateSolidBrush(160, 200, 224)
+    brushSelectedTab& = D2D.CreateSolidBrush(168, 208, 232)
+    brushHighlightedTab& = D2D.CreateSolidBrush(142, 178, 200)
+    brushInactiveTab& = D2D.CreateSolidBrush(106, 133, 150)
+    brushEditBackground& = D2D.CreateSolidBrush(80, 100, 112)
+    brushButton& = D2D.CreateSolidBrush(114, 143, 160)
+  ELSE
+    brushBackground& = D2D.CreateSolidBrush(128, 32, 32)
+    brushSelectedTab& = D2D.CreateSolidBrush(144, 44, 44)
+    brushHighlightedTab& = D2D.CreateSolidBrush(96, 16, 16)
+    brushInactiveTab& = D2D.CreateSolidBrush(72, 0, 0)
+    brushEditBackground& = D2D.CreateSolidBrush(128, 60, 40)
+    brushButton& = D2D.CreateSolidBrush(160, 32, 32)
+  END IF
 
   'Text-Font erzeugen
   hMINIFONT& = D2D.CreateFont("Arial", 0, 8)
@@ -1818,17 +1855,21 @@ FUNCTION LOADSPRITESFROMLIB&(tp&, f$, startsprnr&, endsprnr&, sprstep&, startdes
     pindex& = pindex&+12*sprstep&
 
     'Sprite von LIB nach PB konvertieren
-    FOR y& = 0 TO sprhg&-1
-      blocky& = INT(y&/6)
-      yoff& = y& MOD 6
-      FOR x& = 0 TO sprwd&-1
-        blockx& = INT(x&/6)  '0..3
-        xoff& = x& MOD 6     '0..5
-        q& = (xoff&*4+blocky&)+(yoff&*4+blockx&)*sprwd&+1
-        p& = p&+1
-        ASC(d$, q&) = ASC(a$, p&)
-      NEXT x&
-    NEXT y&
+    IF isBI3& = 0 THEN
+      FOR y& = 0 TO sprhg&-1
+        blocky& = INT(y&/6)
+        yoff& = y& MOD 6
+        FOR x& = 0 TO sprwd&-1
+          blockx& = INT(x&/6)  '0..3
+          xoff& = x& MOD 6     '0..5
+          q& = (xoff&*4+blocky&)+(yoff&*4+blockx&)*sprwd&+1
+          p& = p&+1
+          ASC(d$, q&) = ASC(a$, p&)
+        NEXT x&
+      NEXT y&
+    ELSE
+      d$ = MID$(a$, p&+1, sprwd&*sprhg&)
+    END IF
 
     'Sprite von 8-Bit nach 32-Bit konvertieren
     IF tp& = 2 THEN DIM pixeldata$(endsprnr&-startsprnr&)
@@ -1865,12 +1906,12 @@ FUNCTION LOADSPRITES$
   DIM pal???(255), sprites&(%MAXGROUNDSPRITES+7*%SPRITESPERPLAYER+4*%MAXROADSPRITES+%MAXEDITORSPRITES)
 
   'Datei einlesen
-  f$ = "bi2ed.lib"
-  a$ = READFILECONTENT$(f$)
-  IF a$ = "" THEN
-    LOADSPRITES$ = f$
+  f$ = GetFileLocation$("bi2ed.lib")
+  IF f$ = "" THEN
+    LOADSPRITES$ = "bi2ed.lib"
     EXIT FUNCTION
   END IF
+  a$ = READFILECONTENT$(f$)
 
   'Palette extrahieren und Farben von R6:G6:B6 nach B8:G8:R8 konvertieren
   FOR i& = 0 TO 255
@@ -1883,24 +1924,24 @@ FUNCTION LOADSPRITES$
   NEXT i&
 
   'Landschaft
-  f$ = "BI2\LIB\PART000.LIB"
-  IF LOADSPRITESFROMLIB&(0, f$, 0, %MAXGROUNDSPRITES-1, 1, 0, 0, STR16TO32$(palette$(2))) = 0 THEN
-    LOADSPRITES$ = f$
+  f$ = GetFileLocation$("LIB\PART000.LIB")
+  IF f$ = "" OR LOADSPRITESFROMLIB&(0, f$, 0, %MAXGROUNDSPRITES-1, 1, 0, 0, STR16TO32$(palette$(2))) = 0 THEN
+    LOADSPRITES$ = "LIB\PART000.LIB"
     EXIT FUNCTION
   END IF
 
   'Einheiten
-  f$ = "BI2\LIB\UNIT000.LIB"
-  IF LOADSPRITESFROMLIB&(1, f$, -1, -1, 2, 1337, 143, "") = 0 THEN
-    LOADSPRITES$ = f$
+  f$ = GetFileLocation$("LIB\UNIT000.LIB")
+  IF f$ = "" OR LOADSPRITESFROMLIB&(1, f$, -1, -1, 2, 1337, 143, "") = 0 THEN
+    LOADSPRITES$ = "LIB\UNIT000.LIB"
     EXIT FUNCTION
   END IF
 
   'Straßen/Wege/Gräben/Schienen
   FOR i& = 0 TO 3
-    f$ = "BI2\LIB\LAYR00"+FORMAT$(i&)+".LIB"
-    IF LOADSPRITESFROMLIB&(2, f$, 0, 23, 1, %ROADSPIRTESTART+i&*%MAXROADSPRITES, 0, "") = 0 THEN
-      LOADSPRITES$ = f$
+    f$ = GetFileLocation$("LIB\LAYR00"+FORMAT$(i&)+".LIB")
+    IF f$ = "" OR LOADSPRITESFROMLIB&(2, f$, 0, 23, 1, %ROADSPIRTESTART+i&*%MAXROADSPRITES, 0, "") = 0 THEN
+      LOADSPRITES$ = "LIB\LAYR00"+FORMAT$(i&)+".LIB"
       EXIT FUNCTION
     END IF
   NEXT i&
@@ -1914,6 +1955,75 @@ FUNCTION LOADSPRITES$
   sprites&(%EDITORSPRITESTART+17) = D2D.CreateMemoryBitmap(24, 24, DRAWHIGHLIGHT$(128*16777216+128*65536+128*256+128))
   sprites&(%EDITORSPRITESTART+18) = D2D.CreateMemoryBitmap(24, 24, DRAWHIGHLIGHT$(128*16777216+0*65536+128*256+255))
 END FUNCTION
+
+
+
+'Ermittelt den Ort einer Datei
+FUNCTION GetFileLocation$(f$)
+  LOCAL fullpath$
+
+  IF LEFT$(f$, 4) <> "LIB\" THEN
+    fullpath$ = EXEPATH$+f$
+  ELSE
+    IF libFolder$ <> "" THEN
+      fullpath$ = libFolder$+MID$(f$, 5)
+    END IF
+  END IF
+
+  IF ISFILE(fullpath$) THEN GetFileLocation$ = fullpath$
+END FUNCTION
+
+
+
+'Ermittelt den Ort eines Verzeichnisses
+FUNCTION GetFolderLocation$(startfolder$, foldername$)
+  LOCAL i&, n&, f$, d$()
+  DIM d$(999)
+
+  'prüfen, ob gesuchtes Verzeichnis übergeordnetes Verzeichnis des Startverzeichnisses ist
+  i& = INSTR(UCASE$(startfolder$), "\"+UCASE$(foldername$)+"\")
+  IF i& > 0 THEN
+    GetFolderLocation$ = LEFT$(startfolder$, i&)+foldername$+"\"
+    EXIT FUNCTION
+  END IF
+
+  'prüfen, ob gesuchtes Verzeichnis im Startverzeichnis liegt
+  IF ISFOLDER(startfolder$+foldername$) THEN
+    GetFolderLocation$ = startfolder$+foldername$+"\"
+    EXIT FUNCTION
+  END IF
+
+  'alle Unterverzeichnisse des Startverzeichnisses ermitteln
+  f$ = DIR$(startfolder$+"*", ONLY %SUBDIR)
+  WHILE f$ <> "" AND n& < 1000
+    d$(n&) = f$
+    n& = n&+1
+    f$ = DIR$
+  WEND
+
+  'alle Unterverzeichnisse durchsuchen
+  FOR i& = 0 TO n&-1
+    f$ = GetFolderLocation$(startfolder$+d$(i&)+"\", foldername$)
+    IF f$ <> "" THEN
+      GetFolderLocation$ = f$
+      EXIT FUNCTION
+    END IF
+  NEXT i&
+
+  GetFolderLocation$ = ""
+END FUNCTION
+
+
+
+'Prüft, ob der Editor für Battle Isle 2 oder 3 gestartet wurde
+SUB CheckBIVersion
+  LOCAL a$
+
+  a$ = UCASE$(libFolder$)
+  IF a$ = "" THEN a$ = UCASE$(EXEPATH$)
+  isBI3& = 0
+  IF INSTR(a$, "BI3") > 0 OR INSTR(a$, "Battle Isle 3") > 0 OR INSTR(a$, "SDI") > 0 THEN isBI3& = 1
+END SUB
 
 
 
@@ -2300,6 +2410,7 @@ v& = 0
   a$ = MID$(f$, INSTR(-1, f$, "\")+1)
   missionnr& = -1
   IF LEFT$(a$, 4) = "MISS" THEN missionnr& = VAL(MID$(a$, 5))
+  IF isBI3& <> 0 AND missionnr& >= 100 THEN missionnr& = missionnr&-99
   IF missionnr& > UBOUND(mapnames$()) THEN missionnr& = -1
   CALL SETCAPTION(a$)
   missionFileName$ = f$
@@ -3649,19 +3760,38 @@ END SUB
 
 'Mission testen
 SUB LAUNCHMAP
-  LOCAL r&, f$
+  LOCAL r&, f$, gamepath$
 
   IF mapwidth& = 0 THEN EXIT SUB
+  IF misFolder$ = "" OR ISFOLDER(misFolder$) = 0 THEN
+    r& = MessageBox(hWIN&, GETWORD$(%WORDSTART_ERROR+1), GETWORD$(%WORDSTART_ERROR+0), %MB_OK OR %MB_ICONERROR)
+    EXIT SUB
+  END IF
 
-  'Mission als AMPORGE speichern
-  f$ = missionFileName$
-  CALL SAVEMISSION(EXEPATH$+"BI2\MIS\MISS000.DAT")
-  missionFileName$ = f$
-  f$ = MID$(f$, INSTR(-1, f$, "\")+1)
-  CALL SETCAPTION(f$)
+  IF isBI3& = 0 THEN
+    'Mission als AMPORGE speichern
+    f$ = missionFileName$
+    CALL SAVEMISSION(misFolder$+"MISS000.DAT")
+    missionFileName$ = f$
+    f$ = MID$(f$, INSTR(-1, f$, "\")+1)
+    CALL SETCAPTION(f$)
 
-  'Battle Isle II starten
-  r& = SHELL(EXEPATH$+"DOSBox\DOSBox.exe "+EXEPATH$+"BI2\BI2.BAT -conf "+EXEPATH$+"DOSBox\bi2ed.conf -noconsole -exit")
+    'Battle Isle II starten
+    r& = SHELL(EXEPATH$+"DOSBox\DOSBox.exe "+EXEPATH$+"BI2\BI2.BAT -conf "+EXEPATH$+"DOSBox\bi2ed.conf -noconsole -exit")
+  ELSE
+    'Mission als MISS100 speichern
+    f$ = missionFileName$
+    CALL SAVEMISSION(misFolder$+"MISS100.DAT")
+    missionFileName$ = f$
+    f$ = MID$(f$, INSTR(-1, f$, "\")+1)
+    CALL SETCAPTION(f$)
+
+    'Battle Isle III starten
+    gamepath$ = GetFolderLocation$(EXEPATH$, "SDI")
+    IF gamepath$ <> "" THEN
+      r& = SHELL(gamepath$+"SDI_1R.EXE")
+    END IF
+  END IF
 END SUB
 
 
@@ -4245,10 +4375,14 @@ SUB DRAWACTION(actionnr&, y&)
     IF v& <= 98 THEN
       t$ = GETWORD$(%WORDSTART_MESSAGES+v&)
     ELSE
-      IF totalUnitClasses& > 54 AND v& <= 154 THEN
-        t$ = "EDT"+FORMAT$(v&, "000")
+      IF isBI3& = 0 THEN
+        IF totalUnitClasses& > 54 AND v& <= 154 THEN
+          t$ = "EDT"+FORMAT$(v&, "000")
+        ELSE
+          t$ = FORMAT$(v&)
+        END IF
       ELSE
-        t$ = FORMAT$(v&)
+        t$ = "VIDEO"+FORMAT$(v&, "000")
       END IF
     END IF
   CASE 4:  'DF-Layer
@@ -5203,13 +5337,14 @@ FUNCTION PBMAIN&
   LOCAL e$, cfg&, k&
   LOCAL msgtext AS ASCIIZ*512
   LOCAL Built AS IPOWERTIME
-  DIM undoData$(%MAXUNDOLEVELS-1), shops(%MAXSHOPS-1), shopnames$(%MAXSHOPS-1)
+  DIM undoData$(%MAXUNDOLEVELS-1), shops(%MAXSHOPS-1), shopnames$(%MAXSHOPS-1), gpm?(12, 1)
   DIM validateMessages$(%MAXVALIDATE-1), validatex&(%MAXVALIDATE-1), validatey&(%MAXVALIDATE-1), customMessages$(1, %MAXCUSTOMMSG-1)
   DIM debugdata$(99)
 
   EXEPATH$ = EXE.PATH$
   IF AfxGetWindowsVersion => 6 THEN SetProcessDPIAware
   cfg& = READCONFIG&
+  CALL CheckBIVersion
 
   LET Built = CLASS "PowerTime"
   Built.FileTime = %PB_COMPILETIME
@@ -5257,8 +5392,8 @@ FUNCTION PBMAIN&
   IF e$ <> "" OR cfg& = 0 THEN
     apperror& = 1
     IF cfg& = 0 THEN e$ = $CONFIGFILE
-    msgtext = "Battle Isle II Editor kann nicht gestartet werden, da folgende Datei nicht gefunden wurde:"+CHR$(13,10,13,10)+e$
-    MessageBox hWIN&, msgtext, "Fehler: Datei nicht gefunden", %MB_OK OR %MB_ICONERROR
+    msgtext = GETWORD$(%WORDSTART_ERROR+2)+CHR$(13,10,13,10)+e$
+    MessageBox hWIN&, msgtext, GETWORD$(%WORDSTART_ERROR+3), %MB_OK OR %MB_ICONERROR
     PostQuitMessage 0
   END IF
 
