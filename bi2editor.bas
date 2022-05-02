@@ -4,10 +4,12 @@
 #DEBUG ERROR ON
 #CONSOLE OFF
 
+#INCLUDE "WIN32API.INC"
+
 #INCLUDE "..\DXLib\direct2dlib.inc"
 #INCLUDE ONCE "commdlg.inc"
 
-%COMPILE_VERSION = 1008
+%COMPILE_VERSION = 1010
 $CONFIGFILE = "bi2ed.ini"
 $spx = CHR$(8,10,10,12,14,16,16,18,20,22,22,24,24,22,22,20,18,16,16,14,12,10,10,8)
 $playercolors = CHR$(16,104,56,32,48,64,80)
@@ -27,12 +29,13 @@ $playercolors = CHR$(16,104,56,32,48,64,80)
 %MAXDFLAYER = 10
 %MAXUNDOLEVELS = 20
 %MAXPLAYERS = 6
-%MAXSHOPS = 100
-%MAXACTIONS = 32  'limitiert durch Bildschirmhöhe
+%MAXSHOPS = 1024
+%MAXACTIONS = 36  'limitiert durch Bildschirmhöhe
 %MAXVALIDATE = 100
 %MAXTRANSPORTERSLOT = 8
 %MAXCUSTOMMSG = 16
-$CUSTOMMSGIDS = "USER00;USER01;USER02;USER03;USER04;USER05;USER06;USER07;USER08;USER09;USER10;USER11;USER12;USER13;BRIEFING;BONUSMAP"
+%CUSTMSGMAXLEN = 2000
+$CUSTOMMSGIDS = "USER00;USER01;USER02;USER03;USER04;USER05;USER06;USER07;USER08;USER09;USER10;USER11;USER12;CUTSCENE;BRIEFING;BONUSMAP"
 
 %MAXLANGUAGES = 2  'deutsch + englisch
 %WORDSTART_BUTTON = 0
@@ -47,14 +50,14 @@ $CUSTOMMSGIDS = "USER00;USER01;USER02;USER03;USER04;USER05;USER06;USER07;USER08;
 %WORDSTART_OPENDIALOGUE = 110
 %WORDSTART_SAVEQUERY = 120
 %WORDSTART_PROPERTIES = 130
-%WORDSTART_NEWMAP = 140
-%WORDSTART_SPRITEINFO = 150
-%WORDSTART_VALIDATION = 160
-%WORDSTART_MAPINFO = 170
-%WORDSTART_BONUSCONDITION = 180
-%WORDSTART_ERROR=190
-%WORDSTART_WELCOME = 200
-%WORDSTART_MESSAGES = 230
+%WORDSTART_NEWMAP = 150
+%WORDSTART_SPRITEINFO = 160
+%WORDSTART_VALIDATION = 170
+%WORDSTART_MAPINFO = 180
+%WORDSTART_BONUSCONDITION = 190
+%WORDSTART_ERROR=200
+%WORDSTART_WELCOME = 210
+%WORDSTART_MESSAGES = 240
 
 %DIALOGUE_PROPERTIES = 1
 %DIALOGUE_ACTIONS = 2
@@ -66,11 +69,11 @@ $CUSTOMMSGIDS = "USER00;USER01;USER02;USER03;USER04;USER05;USER06;USER07;USER08;
 
 TYPE TShop  '80 Bytes
   unittype AS INTEGER  '1=Shop , 2=AI-Point
-  position AS INTEGER
+  position AS WORD
   shopfunction AS INTEGER  '1=HQ , 2=Produktion , 4=Depot , 8=Akademie , 16=Stadt , 32=Transporter
   u3 AS INTEGER
   nameindex AS INTEGER  'Index in Shopfile (nur für Gebäude)
-  position2 AS INTEGER  '0 für AI-Points
+  position2 AS WORD  '0 für AI-Points
   energy AS INTEGER
   material AS INTEGER
   eplus AS BYTE
@@ -95,7 +98,7 @@ GLOBAL D2D AS IDIRECT2D
 GLOBAL pWindow AS IWindow
 GLOBAL EXEPATH$, apperror&, compileDate$
 GLOBAL configdata$, selectedLanguage&, reopenLastMap&, bi2020support&, isBI3&, words$()
-GLOBAL libFolder$, misFolder$
+GLOBAL libFolder$, misFolder$, bi2020folder$
 GLOBAL hWIN&, hOldWinProc&, hOldGfxWinProc&
 GLOBAL hTEXTFONT&, hMINIFONT&, hBUTTONFONT&, hBIGFONT&
 GLOBAL mousexpos&, mouseypos&
@@ -128,8 +131,10 @@ GLOBAL newmaparea AS RECT  'neue Karte
 GLOBAL startterrainarea AS RECT  'Terrain für neue Karte
 GLOBAL mapSelection AS RECT  'auf Karte markierter Bereich
 GLOBAL validationarea AS RECT  'Bereich für Validationsmeldungen
-GLOBAL customMessages$()  'benutzerdefinierte Meldungen in Deutsch und Englisch
+GLOBAL customMessages$$()  'benutzerdefinierte Meldungen in Deutsch, Englisch und benutzerdefinierter Sprache
 GLOBAL selectedCustomMsg&  'zu bearbeitende benutzerdefinierte Meldung
+GLOBAL custMsgUserLang$    '3-Byte-Code der dritten (benutzerdefinierten) Sprache
+GLOBAL yMapFactor&  '64 für BI2 kompatible Karten, 256 für Karten größer als 64x64
 GLOBAL zoom#, scrollX&, scrollY&, dragStartX&, dragStartY&, drawing&, shiftpressed&
 GLOBAL highlightedButton&, highlightedActionButton&, highlightedNewActionButton&, highlightShops&
 GLOBAL selectedSprite&, selectedLevel&, selectedDF&, selectedShop&, renderedMap$
@@ -141,13 +146,15 @@ GLOBAL buttonActions AS IDXCONTROL, buttonProperties AS IDXCONTROL, buttonValida
 GLOBAL buttonNew AS IDXCONTROL, buttonLoad AS IDXCONTROL, buttonSave AS IDXCONTROL, buttonQuit AS IDXCONTROL
 GLOBAL buttonDeleteAction() AS IDXCONTROL, buttonNewAction AS IDXCONTROL
 GLOBAL listboxWidth AS IDXCONTROL, listboxHeight AS IDXCONTROL
-GLOBAL editMapDescription AS IDXCONTROL, editMapShortDescr AS IDXCONTROL, editCustomMessageGER AS IDXCONTROL, editCustomMessageENG AS IDXCONTROL
+GLOBAL editMapDescription AS IDXCONTROL, editMapShortDescr AS IDXCONTROL, editCustomMessageGER AS IDXCONTROL, editCustomMessageENG AS IDXCONTROL, editCustomMessageUserLang AS IDXCONTROL, editCustomLangCode AS IDXCONTROL
+GLOBAL editPlayerName() AS IDXCONTROL
 GLOBAL editShopname AS IDXCONTROL, editEnergy AS IDXCONTROL, editMaterial AS IDXCONTROL, editEnergyPlus AS IDXCONTROL, editMaterialPlus AS IDXCONTROL
 GLOBAL listboxOwner AS IDXCONTROL, listboxShoptype AS IDXCONTROL, listboxAICommand AS IDXCONTROL
 GLOBAL listboxTerrain AS IDXCONTROL, listboxWeather AS IDXCONTROL, listboxWinCond AS IDXCONTROL, listboxNextmap AS IDXCONTROL, listboxBonusmap AS IDXCONTROL, listboxCustomMessages AS IDXCONTROL
-GLOBAL listboxPlayer AS IDXCONTROL, listboxTurn AS IDXCONTROL, listboxMovement AS IDXCONTROL, listboxAction AS IDXCONTROL, listboxParam1 AS IDXCONTROL, listboxParam2 AS IDXCONTROL
+GLOBAL listboxPlayer AS IDXCONTROL, listboxTurn AS IDXCONTROL, listboxMovement AS IDXCONTROL, listboxAction AS IDXCONTROL, listboxParam1 AS IDXCONTROL, listboxParam2 AS IDXCONTROL, listboxParam3 AS IDXCONTROL
 GLOBAL radiogroupLanguage AS IDXCONTROL, checkboxReopen AS IDXCONTROL, checkboxBI2020 AS IDXCONTROL
 GLOBAL prodslotspr&, normalslotspr&
+GLOBAL mapCreatedFromGif&
 
 
 
@@ -238,10 +245,10 @@ FUNCTION GETWORDINDEX&(BYVAL a$)
   'Attribut auswerten
   SELECT CASE a$
   CASE "BUTTON": IF nr& > 0 AND nr& <= 8 THEN i& = %WORDSTART_BUTTON+nr&-1
-  CASE "ACTIONSCREEN": IF nr& > 0 AND nr& <= 17 THEN i& = %WORDSTART_ACTIONSCREEN+nr&-1
-  CASE "ACTIONLIST": IF nr& > 0 AND nr& <= 11 THEN i& = %WORDSTART_ACTIONLIST+nr&-1
+  CASE "ACTIONSCREEN": IF nr& > 0 AND nr& <= 19 THEN i& = %WORDSTART_ACTIONSCREEN+nr&-1
+  CASE "ACTIONLIST": IF nr& > 0 AND nr& <= 12 THEN i& = %WORDSTART_ACTIONLIST+nr&-1
   CASE "WEATHER": IF nr& > 0 AND nr& <= 5 THEN i& = %WORDSTART_WEATHER+nr&-1
-  CASE "VICTORYCONDITION": IF nr& > 0 AND nr& <= 9 THEN i& = %WORDSTART_VICTORYCONDITION+nr&-1
+  CASE "VICTORYCONDITION": IF nr& > 0 AND nr& <= 10 THEN i& = %WORDSTART_VICTORYCONDITION+nr&-1
   CASE "BONUSCONDITION": IF nr& > 0 AND nr& <= 4 THEN i& = %WORDSTART_BONUSCONDITION+nr&-1
   CASE "SHOPTYPE": IF nr& > 0 AND nr& <= 7 THEN i& = %WORDSTART_SHOPTYPE+nr&-1
   CASE "AICOMMAND": IF nr& > 0 AND nr& <= 9 THEN i& = %WORDSTART_AICOMMAND+nr&-1
@@ -249,12 +256,12 @@ FUNCTION GETWORDINDEX&(BYVAL a$)
   CASE "OPTIONS": IF nr& > 0 AND nr& <= 4 THEN i& = %WORDSTART_OPTIONS+nr&-1
   CASE "OPENDIALOGUE": IF nr& > 0 AND nr& <= 2 THEN i& = %WORDSTART_OPENDIALOGUE+nr&-1
   CASE "SAVEQUERY": IF nr& > 0 AND nr& <= 2 THEN i& = %WORDSTART_SAVEQUERY+nr&-1
-  CASE "PROPERTIES": IF nr& > 0 AND nr& <= 9 THEN i& = %WORDSTART_PROPERTIES+nr&-1
+  CASE "PROPERTIES": IF nr& > 0 AND nr& <= 13 THEN i& = %WORDSTART_PROPERTIES+nr&-1
   CASE "NEWMAP": IF nr& > 0 AND nr& <= 7 THEN i& = %WORDSTART_NEWMAP+nr&-1
   CASE "SPRITEINFO": IF nr& > 0 AND nr& <= 5 THEN i& = %WORDSTART_SPRITEINFO+nr&-1
   CASE "VALIDATION": IF nr& > 0 AND nr& <= 5 THEN i& = %WORDSTART_VALIDATION+nr&-1
   CASE "MAPINFO": IF nr& > 0 AND nr& <= 2 THEN i& = %WORDSTART_MAPINFO+nr&-1
-  CASE "ERROR": IF nr& > 0 AND nr& <= 4 THEN i& = %WORDSTART_ERROR+nr&-1
+  CASE "ERROR": IF nr& > 0 AND nr& <= 6 THEN i& = %WORDSTART_ERROR+nr&-1
   CASE "WELCOME": IF nr& > 0 AND nr& <= 24 THEN i& = %WORDSTART_WELCOME+nr&-1
   CASE "MESSAGE": IF nr& > 0 AND nr& <= 99 THEN i& = %WORDSTART_MESSAGES+nr&-1
   END SELECT
@@ -317,6 +324,11 @@ FUNCTION READCONFIG&
             CASE "MISFOLDER":
               misFolder$ = b$
               IF misFolder$ <> "" AND RIGHT$(misFolder$, 1) <> "\" THEN misFolder$ = misFolder$+"\"
+            CASE "BI2020FOLDER":
+              bi2020folder$ = b$
+              IF bi2020folder$ <> "" AND RIGHT$(bi2020folder$, 1) <> "\" THEN bi2020folder$ = bi2020folder$+"\"
+            CASE "DEFAULTCUSTMSGLANG":
+              custMsgUserLang$ = LEFT$(b$, 3)
             END SELECT
 
           CASE 2:  'Sprachen
@@ -330,6 +342,7 @@ FUNCTION READCONFIG&
 
   IF libFolder$ = "" THEN libFolder$ = GetFolderLocation$(EXEPATH$, "LIB")
   IF misFolder$ = "" THEN misFolder$ = GetFolderLocation$(EXEPATH$, "MIS")
+  IF bi2020folder$ = "" AND bi2020support& <> 0 THEN bi2020folder$ = FindFileInFolder$(EXEPATH$, "bi2020.exe")
 
   READCONFIG& = 1
 END FUNCTION
@@ -347,6 +360,8 @@ SUB SAVECONFIG
   CALL REPLACESETTING("SETTINGS", "BI2020", FORMAT$(ABS(bi2020support&)))
   CALL REPLACESETTING("SETTINGS", "LIBFOLDER", libFolder$)
   CALL REPLACESETTING("SETTINGS", "MISFOLDER", misFolder$)
+  CALL REPLACESETTING("SETTINGS", "BI2020FOLDER", bi2020folder$)
+  CALL REPLACESETTING("SETTINGS", "DEFAULTCUSTMSGLANG", custMsgUserLang$)
 
   CALL SAVEFILE(EXEPATH$+$CONFIGFILE, configdata$)
 END SUB
@@ -424,6 +439,123 @@ FUNCTION TRANSLATEWORD$(d$)
   'Wort nicht gefunden
   TRANSLATEWORD$ = d$
 END FUNCTION
+
+
+
+'Farbwert in Terrain umwandeln
+SUB SetTerrainFromRGB(c&, x&, y&)
+  LOCAL hue!, saturation!, brightness!
+  LOCAL a$
+
+  D2D.BGRtoHSB(c&, hue!, saturation!, brightness!)  'Farbton: 0=Rot , 60=Gelb , 120=Grün , 180=Türkis , 240=Blau , 300=Lila
+
+  IF saturation! < 0.1 THEN
+    mapdata%(x&, y&, 0, 0) = 271
+    mapdata%(x&, y&, 1, 0) = 288  'Hügel
+  ELSE
+    SELECT CASE hue!
+    CASE 216 TO 300:  'blau
+      mapdata%(x&, y&, 0, 0) = 97-INT(brightness!*2.9)  'Wasser
+    CASE 144 TO 216:  'türkis
+      mapdata%(x&, y&, 0, 0) = 387-INT(brightness!*2.9)  'Wasser (Dschungel)
+    CASE 90 TO 120:  'grün (Richtung gelb)
+      IF brightness! <= 0.4 THEN
+        mapdata%(x&, y&, 0, 0) = 271
+        mapdata%(x&, y&, 1, 0) = 243  'Wald auf Gras
+      ELSE
+        a$ = MKI$(272)+MKI$(274)+MKI$(271)+MKI$(273)
+        mapdata%(x&, y&, 0, 0) = CVI(a$, INT((brightness!-0.4)*6.66)*2+1)  'Gras
+      END IF
+    CASE 120 TO 144:  'grün (Richtung türkis)
+      mapdata%(x&, y&, 0, 0) = 355  'Dschungelboden
+      IF brightness! <= 0.4 THEN mapdata%(x&, y&, 1, 0) = 390  'Dschungelbewuchs
+    CASE 30 TO 90:  'gelb
+      mapdata%(x&, y&, 0, 0) = IIF&(brightness! < 0.5, 312, 176)  'Sand
+    CASE ELSE
+      mapdata%(x&, y&, 0, 0) = 16
+    END SELECT
+  END IF
+END SUB
+
+
+
+'Karte aus GIF Bild erzeugen
+'bi2editor -mapfromgif G:\Homepage-Bau\Arena\BI\bi2westeros.gif
+SUB CreateMapFromGif(BYVAL f$)
+  LOCAL pixeldata$, bitmapwidth&, bitmapheight&, i&, n&, m&, mspr&, dx&, dy&, x&, y&, p&, c&, terrain&
+
+  'GIF Datei laden
+  f$ = TRIM$(f$, CHR$(34))
+  IF ISFILE(f$) = 0 THEN
+    MessageBox hWIN&, f$+"", GETWORD$(%WORDSTART_ERROR+3), %MB_OK OR %MB_ICONERROR
+    EXIT SUB
+  END IF
+  D2D.GraphicLoadGIF(f$, bitmapwidth&, bitmapheight&, pixeldata$)
+  IF bitmapwidth& < 1 OR bitmapheight& < 1 THEN
+    MessageBox hWIN&, f$+"", GETWORD$(%WORDSTART_ERROR+4), %MB_OK OR %MB_ICONERROR
+    EXIT SUB
+  END IF
+  IF bitmapwidth& > 256 OR bitmapheight& > 256 THEN
+    MessageBox hWIN&, f$+"", GETWORD$(%WORDSTART_ERROR+5), %MB_OK OR %MB_ICONERROR
+    EXIT SUB
+  END IF
+
+  'neue Karte mit derselben Größe wie das Bild erzeugen
+  CALL CREATEMAP(bitmapwidth&, bitmapheight&, 95)
+
+  'Terrain aus Pixeldaten erzeugen
+  p& = 1
+  FOR y& = 0 TO bitmapheight&-1
+    FOR x& = 0 TO bitmapwidth&-1
+      c& = CVL(pixeldata$, p&)
+      p& = p&+4
+      CALL SetTerrainFromRGB(c&, x&, y&)
+    NEXT x&
+  NEXT y&
+
+  'Hügelgruppen durch Gebirge ersetzen
+  CALL INITMULTISPRITES
+  FOR mspr& = 12 TO 10 STEP -1  '16/9/4 Felder großer Berg
+    n& = LEN(multiSprites$(mspr&))/4
+    FOR y& = 0 TO bitmapheight&-1
+      FOR x& = 0 TO bitmapwidth&-1
+        IF mapdata%(x&, y&, 1, 0) = 288 THEN
+          'prüfen, ob ausreichend Hügel vorhanden sind, um Gebirgsfeld vollständig darzustellen
+          m& = 0
+          FOR i& = 0 TO n&-1
+            dx& = ASC(multiSprites$(mspr&), i&*4+1)
+            IF dx& > 127 THEN dx& = dx&-256
+            dy& = ASC(multiSprites$(mspr&), i&*4+2)
+            IF dy& > 127 THEN dy& = dy&-256
+            IF (x& AND 1) = 1 AND (dx& AND 1) = 1 THEN dy& = dy&+1
+            IF x&+dx& >= 0 AND x&+dx& < mapwidth& AND y&+dy& >= 0 AND y&+dy& < mapheight& AND mapdata%(x&+dx&, y&+dy&, 1, 0) = 288 THEN m& = m&+1
+          NEXT i&
+          IF m& = n& THEN
+            'Gebirge einfügen
+            FOR i& = 0 TO n&-1
+              dx& = ASC(multiSprites$(mspr&), i&*4+1)
+              IF dx& > 127 THEN dx& = dx&-256
+              dy& = ASC(multiSprites$(mspr&), i&*4+2)
+              IF dy& > 127 THEN dy& = dy&-256
+              IF (x& AND 1) = 1 AND (dx& AND 1) = 1 THEN dy& = dy&+1
+              mapdata%(x&+dx&, y&+dy&, 1, 0) = CVI(multiSprites$(mspr&), i&*4+3)
+            NEXT i&
+          END IF
+        END IF
+      NEXT x&
+    NEXT y&
+  NEXT mspr&
+
+  'Karte weichzeichen
+  FOR y& = 0 TO bitmapheight&-1
+    FOR x& = 0 TO bitmapwidth&-1
+      CALL SMOOTHMAP(x&, y&, 0)
+      CALL SMOOTHMAP(x&, y&, 1)
+    NEXT x&
+  NEXT y&
+
+  mapCreatedFromGif& = 1
+END SUB
 
 
 
@@ -587,7 +719,7 @@ SUB POPULATEACTIONPARAMLISTBOX(BYVAL actionNr&)
   LOCAL i&, a$
 
   SELECT CASE actionNr&
-  CASE 0:  'Wetter
+  CASE 0, 11:  'Wetter
     listboxParam1.SetItems(CREATELISTBOXITEMS$(%WORDSTART_WEATHER, 5))
 
   CASE 1:  'Nachricht
@@ -609,7 +741,7 @@ SUB POPULATEACTIONPARAMLISTBOX(BYVAL actionNr&)
     listboxParam1.SetItems(a$)
 
   CASE 2, 3:  'Sieg / Niederlage
-    listboxParam1.SetItems(CREATELISTBOXITEMS$(%WORDSTART_VICTORYCONDITION, 9))
+    listboxParam1.SetItems(CREATELISTBOXITEMS$(%WORDSTART_VICTORYCONDITION, IIF&(bi2020support& = 0, 9, 10)))
 
   CASE 4, 8, 9, 10:  'DF-Layer
     listboxParam1.SetItems("0;1;2;3;4;5;6;7;8;9")
@@ -630,9 +762,10 @@ END SUB
 
 'Aktions-Parameter-Listbox 2 befüllen
 SUB POPULATEACTIONPARAMLISTBOX2(BYVAL actionNr&, BYVAL p1&)
-  LOCAL i&, j&, a$, b$
+  LOCAL i&, j&, a$, b$, wordturn$
 
-  listboxParam2.SetItems("n/a")
+  wordturn$ = GETWORD$(%WORDSTART_ACTIONSCREEN+2)+" "
+  IF actionNr& <> 11 THEN listboxParam2.SetItems("n/a")
 
   SELECT CASE actionNr&
   CASE 2, 3:  'Sieg / Niederlage
@@ -650,9 +783,9 @@ SUB POPULATEACTIONPARAMLISTBOX2(BYVAL actionNr&, BYVAL p1&)
       listboxParam2.SetItems(a$)
 
     CASE 2:  'Runde erreicht
-      a$ = "Runde 1"
+      a$ = wordturn$+"1"
       FOR i& = 2 TO 100
-        a$ = a$+";"+"Runde "+FORMAT$(i&)
+        a$ = a$+";"+wordturn$+FORMAT$(i&)
       NEXT i&
       listboxParam2.SetItems(a$)
 
@@ -695,9 +828,9 @@ SUB POPULATEACTIONPARAMLISTBOX2(BYVAL actionNr&, BYVAL p1&)
       listboxParam2.SetItems(a$)
 
     CASE 1:  'Runde noch nicht erreicht
-      a$ = "Runde 1"
+      a$ = wordturn$+"1"
       FOR i& = 2 TO 100
-        a$ = a$+";"+"Runde "+FORMAT$(i&)
+        a$ = a$+";"+wordturn$+FORMAT$(i&)
       NEXT i&
       listboxParam2.SetItems(a$)
 
@@ -709,6 +842,14 @@ SUB POPULATEACTIONPARAMLISTBOX2(BYVAL actionNr&, BYVAL p1&)
       listboxParam2.SetItems(a$)
 
     END SELECT
+
+  CASE 11:  'lokales Wetter
+    FOR i& = 0 TO mapheight&-1
+      a$ = a$+FORMAT$(i&)+";"
+    NEXT i&
+    a$ = LEFT$(a$, LEN(a$)-1)
+    listboxParam2.SetItems(a$)
+    listboxParam3.SetItems(a$)
 
   END SELECT
 END SUB
@@ -725,9 +866,10 @@ FUNCTION GETNEXTGPM&(slotnr&, pl&)
   'nächste Einheit ermitteln, die noch nicht in der allgemeinen Produktionspaletten ist
   DO
     v& = v&+1
-    IF v& = 8 THEN v& = 9
-    IF v& = 21 THEN v& = 22
-    IF v& > 22 AND v& < 52 THEN v& = 52
+    IF v& = 8 THEN v& = 9  'Fahrende Festung überspringen
+    IF v& = 21 THEN v& = 22  'Rune überspringen
+    IF v& > 22 AND v& < 25 THEN v& = 25  'Skull und Ionstar überspringen
+    IF v& > 26 AND v& < 52 THEN v& = 52  'Züge, Flugzeuge, Schiffe überspringen
     IF v& >= totalUnitClasses& OR v& > 63 THEN v& = 0
     duplicate& = 0
     FOR i& = 0 TO 12
@@ -875,8 +1017,8 @@ SUB UNDOEDIT
 
   'ungültige Shops und AI-Points löschen
   FOR shopnr& = nshops&-1 TO 0 STEP -1
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
+    shopx& = shops(shopnr&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(shopnr&).position/yMapFactor&)
     IF shops(shopnr&).unittype = 2 THEN
       'AI-Point ist nur gültig, falls sich auf dem Feld eine Einheit befindet
       IF mapdata%(shopx&, shopy&, 2, 0) = -1 THEN CALL DELETESHOP(shopnr&)
@@ -909,8 +1051,8 @@ SUB SHOWSHOP
     shopnames$(selectedShop&) = "AI Point "+FORMAT$(selectedShop&+1)
   ELSE
     IF shops(selectedShop&).shoptype > 0 THEN isShop& = 1
-    shopx& = shops(selectedShop&).position AND 63
-    shopy& = INT(shops(selectedShop&).position/64)
+    shopx& = shops(selectedShop&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(selectedShop&).position/yMapFactor&)
     IF shopx& >= 0 AND shopx& < mapwidth& AND shopy& >= 0 AND shopy& < mapheight& THEN
       sprnr& = SPRITETOUNIT&(mapdata%(shopx&, shopy&, 2, 0))
       IF sprnr& >= 0 AND sprnr& < 64 THEN shopnames$(selectedShop&) = unitnames$(sprnr&)+" "+FORMAT$(selectedShop&+1)
@@ -976,6 +1118,8 @@ END SUB
 
 'Karteneigenschaften ausblenden
 SUB HIDEMAPPROPERTIES
+  LOCAL i&
+
   listboxTerrain.Visible = 0
   listboxWeather.Visible = 0
   listboxWinCond.Visible = 0
@@ -986,6 +1130,11 @@ SUB HIDEMAPPROPERTIES
   listboxCustomMessages.Visible = 0
   editCustomMessageGER.Visible = 0
   editCustomMessageENG.Visible = 0
+  editCustomMessageUserLang.Visible = 0
+  editCustomLangCode.Visible = 0
+  FOR i& = 0 TO %MAXPLAYERS-1
+    editPlayerName(i&).Visible = 0
+  NEXT i&
 END SUB
 
 
@@ -1004,6 +1153,7 @@ SUB HIDEACTIONDIALOGUE
   listboxAction.Visible = 0
   listboxParam1.Visible = 0
   listboxParam2.Visible = 0
+  listboxParam3.Visible = 0
 END SUB
 
 
@@ -1018,7 +1168,7 @@ END SUB
 
 
 'Neue-Karte Dialog ausblenden
-SUB HIDENEWMAPDIALOGUES
+SUB HIDENEWMAPDIALOGUE
   listboxWidth.Visible = 0
   listboxHeight.Visible = 0
 END SUB
@@ -1031,7 +1181,7 @@ SUB HIDEDIALOGUES(showdialogue&)
   IF (showdialogue& AND %DIALOGUE_ACTIONS) = 0 THEN CALL HIDEACTIONDIALOGUE
   IF (showdialogue& AND %DIALOGUE_SHOP) = 0 THEN CALL HIDESHOPDIALOGUE
   IF (showdialogue& AND %DIALOGUE_OPTIONS) = 0 THEN CALL HIDEOPTIONS
-  IF (showdialogue& AND %DIALOGUE_NEWMAP) = 0 THEN CALL HIDENEWMAPDIALOGUES
+  IF (showdialogue& AND %DIALOGUE_NEWMAP) = 0 THEN CALL HIDENEWMAPDIALOGUE
 END SUB
 
 
@@ -1103,7 +1253,7 @@ END SUB
 
 'Multi-Sprites definieren
 SUB INITMULTISPRITES
-  DIM multiSprites$(15)
+  REDIM multiSprites$(15)
 
   'Angaben beziehen sich auf gerade X-Position für Zentral-Sprite
   multiSprites$(0) = CHR$(0,0)+MKI$(76)+CHR$(0,255)+MKI$(77)+CHR$(255,0)+MKI$(78)+CHR$(1,0)+MKI$(79)  'Fabrik
@@ -1451,9 +1601,9 @@ SUB INITBRUSHES
   playerRGB&(0) = D2D.CreateSolidBrush(0, 0, 255)
   playerRGB&(1) = D2D.CreateSolidBrush(255, 0, 0)
   playerRGB&(2) = D2D.CreateSolidBrush(255, 127, 0)
-  playerRGB&(3) = D2D.CreateSolidBrush(120, 110, 0)
+  playerRGB&(3) = D2D.CreateSolidBrush(110, 100, 0)
   playerRGB&(4) = D2D.CreateSolidBrush(160, 160, 120)
-  playerRGB&(5) = D2D.CreateSolidBrush(130, 130, 0)
+  playerRGB&(5) = D2D.CreateSolidBrush(170, 170, 0)
 
   'Pinsel erzeugen
   brushWhite& = D2D.CreateSolidBrush(255, 255, 255)
@@ -1543,6 +1693,10 @@ SUB INITCONTROLS
     IF a$ <> "" THEN a$ = a$+";"
     a$ = a$+FORMAT$(i&)+" - "+mapnames$(i&)
   NEXT i&
+  FOR i& = 0 TO %MAXPLAYERS-1
+    editPlayerName(i&) = CLASS "DXCONTROL"
+    editPlayerName(i&).InitEdit(D2D, "", GETWORD$(%WORDSTART_ACTIONSCREEN+1)+" "+FORMAT$(i&+1), palettearea.left+2, allyarea.top-1+i&*20, 60, 16, 16, hBUTTONFONT&, playerRGB&(i&), brushBorder&, brushWhite&, 0)
+  NEXT i&
   listboxNextmap = CLASS "DXCONTROL"
   listboxNextmap.InitListbox(D2D, aimaskarea.left+40, aimaskarea.top, 122, 20, a$, hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
   listboxBonusmap = CLASS "DXCONTROL"
@@ -1555,9 +1709,14 @@ SUB INITCONTROLS
   listboxCustomMessages = CLASS "DXCONTROL"
   listboxCustomMessages.InitListbox(D2D, custommessagesarea.right-140, custommessagesarea.top-23, 122, 20, $CUSTOMMSGIDS, hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, CODEPTR(LISTBOXITEMCHANGED), 0)
   editCustomMessageGER = CLASS "DXCONTROL"
-  editCustomMessageGER.InitEditMultiline(D2D, "", "", custommessagesarea.left+3, custommessagesarea.top+3, custommessagesarea.right-custommessagesarea.left-6, 96, 1024, hTEXTFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
+  editCustomMessageGER.InitEditMultiline(D2D, "", "", custommessagesarea.left+3, custommessagesarea.top+23, custommessagesarea.right-custommessagesarea.left-6, 96, %CUSTMSGMAXLEN, hTEXTFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
   editCustomMessageENG = CLASS "DXCONTROL"
-  editCustomMessageENG.InitEditMultiline(D2D, "", "", custommessagesarea.left+3, custommessagesarea.top+103, custommessagesarea.right-custommessagesarea.left-6, 96, 1024, hTEXTFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
+  editCustomMessageENG.InitEditMultiline(D2D, "", "", custommessagesarea.left+3, custommessagesarea.top+143, custommessagesarea.right-custommessagesarea.left-6, 96, %CUSTMSGMAXLEN, hTEXTFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
+  editCustomMessageUserLang = CLASS "DXCONTROL"
+  editCustomMessageUserLang.InitEditMultiline(D2D, "", "", custommessagesarea.left+3, custommessagesarea.top+263, custommessagesarea.right-custommessagesarea.left-6, 96, %CUSTMSGMAXLEN, hTEXTFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
+  editCustomMessageUserLang.DisabledColor = brushGrey96&
+  editCustomLangCode = CLASS "DXCONTROL"
+  editCustomLangCode.InitEdit(D2D, "", custMsgUserLang$, custommessagesarea.right-43, custommessagesarea.top+243, 40, 16, 3, hMINIFONT&, brushWhite&, brushBorder&, brushEditBackground&, 0)
 
   'Aktionen
   DIM buttonDeleteAction(%MAXACTIONS-1)
@@ -1572,7 +1731,7 @@ SUB INITCONTROLS
   listboxPlayer.InitListbox(D2D, newactionarea.left+50, newactionarea.top+2, 122, 20, CREATEPLAYERLISTBOXITEMS$, hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
   listboxTurn = CLASS "DXCONTROL"
   a$ = "0"
-  FOR i& = 1 TO 60
+  FOR i& = 1 TO 99
     a$ = a$+";"+FORMAT$(i&)
   NEXT i&
   listboxTurn.InitListbox(D2D, newactionarea.left+50, newactionarea.top+24, 122, 20, a$, hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
@@ -1582,13 +1741,15 @@ SUB INITCONTROLS
     a$ = a$+";"+FORMAT$(i&)
   NEXT i&
   listboxMovement.InitListbox(D2D, newactionarea.left+50, newactionarea.top+46, 122, 20, a$, hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
-  i& = IIF&(bi2020support& = 0, 6, 11)
+  i& = IIF&(bi2020support& = 0, 6, 12)
   listboxAction = CLASS "DXCONTROL"
   listboxAction.InitListbox(D2D, newactionarea.left+250, newactionarea.top+2, 122, 20, CREATELISTBOXITEMS$(%WORDSTART_ACTIONLIST, i&), hBUTTONFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, CODEPTR(LISTBOXITEMCHANGED), 0)
   listboxParam1 = CLASS "DXCONTROL"
   listboxParam1.InitListbox(D2D, newactionarea.left+250, newactionarea.top+24, 122, 20, "n/a", hMINIFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, CODEPTR(LISTBOXITEMCHANGED), 0)
   listboxParam2 = CLASS "DXCONTROL"
   listboxParam2.InitListbox(D2D, newactionarea.left+250, newactionarea.top+46, 122, 20, "n/a", hMINIFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
+  listboxParam3 = CLASS "DXCONTROL"
+  listboxParam3.InitListbox(D2D, newactionarea.left+312, newactionarea.top+46, 60, 20, "n/a", hMINIFONT&, brushBlack&, brushBorder&, brushButton&, brushHighlightedTab&, 0, 0)
 
   'neue Karte
   listboxWidth = CLASS "DXCONTROL"
@@ -1662,8 +1823,8 @@ FUNCTION FINDSHOP&(x&, y&)
   LOCAL shopnr&, shopx&, shopy&
 
   FOR shopnr& = 0 TO nshops&-1
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
+    shopx& = shops(shopnr&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(shopnr&).position/yMapFactor&)
     IF shopx& = x& AND shopy& = y& THEN
       FINDSHOP& = shopnr&
       EXIT FUNCTION
@@ -2015,6 +2176,39 @@ END FUNCTION
 
 
 
+'Ermittelt den Ort einer Datei
+FUNCTION FindFileInFolder$(startfolder$, fname$)
+  LOCAL i&, n&, f$, d$()
+  DIM d$(999)
+
+  'prüfen, ob gesuchte Datei im Startverzeichnis liegt
+  IF ISFILE(startfolder$+fname$) THEN
+    FindFileInFolder$ = startfolder$
+    EXIT FUNCTION
+  END IF
+
+  'alle Unterverzeichnisse des Startverzeichnisses ermitteln
+  f$ = DIR$(startfolder$+"*", ONLY %SUBDIR)
+  WHILE f$ <> "" AND n& < 1000
+    d$(n&) = f$
+    n& = n&+1
+    f$ = DIR$
+  WEND
+
+  'alle Unterverzeichnisse durchsuchen
+  FOR i& = 0 TO n&-1
+    f$ = FindFileInFolder$(startfolder$+d$(i&)+"\", fname$)
+    IF f$ <> "" THEN
+      FindFileInFolder$ = f$
+      EXIT FUNCTION
+    END IF
+  NEXT i&
+
+  FindFileInFolder$ = ""
+END FUNCTION
+
+
+
 'Prüft, ob der Editor für Battle Isle 2 oder 3 gestartet wurde
 SUB CheckBIVersion
   LOCAL a$
@@ -2311,12 +2505,6 @@ v& = 0
   listboxNextmap.SelectedItem = ASC(originalMissData$, 7)
   listboxBonusmap.SelectedItem = ASC(originalMissData$, 297)
   allymatrix$ = MID$(originalMissData$, 17, 6)
-'ASC(originalMissData$, 5) = 19
-'ASC(originalMissData$, 10) = 31
-'ASC(originalMissData$, 16) = 1
-'ASC(originalMissData$, 281) = 208
-'ASC(originalMissData$, 294) = 65
-'ASC(originalMissData$, 295) = 1
 
 'debugdata$(missNr&) = MKI$(dfLayerCount&)+originalMissData$
 'MID$(debugdata$(missNr&), 153, 128) = STRING$(128, 0)
@@ -2338,6 +2526,19 @@ v& = 0
       k& = k&+1
     END IF
   NEXT i&
+
+  'Spielernamen (nur Battle Isle 2020)
+  IF bi2020support& <> 0 THEN
+    IF ASC(originalMissData$, 23) > 32 THEN
+      FOR i& = 0 TO %MAXPLAYERS-1
+        editPlayerName(i&).Value = RTRIM$(MID$(originalMissData$, 23+i&*16, 16))
+      NEXT i&
+    ELSE
+      FOR i& = 0 TO %MAXPLAYERS-1
+        editPlayerName(i&).Value = GETWORD$(%WORDSTART_ACTIONSCREEN+1)+" "+FORMAT$(i&+1)
+      NEXT i&
+    END IF
+  END IF
 
   'Aktionen extrahieren
   actions$ = MID$(a$, pMap&+5, pDF&-pMap&-4)
@@ -2366,9 +2567,9 @@ v& = 0
       p& = 5
       k& = 0
       WHILE p& <= dflen&
-        v& = CVI(dfdata$, p&)  'Position
-        dx& = v& AND 63
-        dy& = INT(v&/64)
+        v& = CVWRD(dfdata$, p&)  'Position
+        dx& = v& AND (yMapFactor&-1)
+        dy& = INT(v&/yMapFactor&)
         IF dx& >= 0 AND dx& < x& AND dy& >= 0 AND dy& < y& THEN
           mapdata%(dx&, dy&, 0, dfnr&+1) = CVI(dfdata$, p&+2)
           mapdata%(dx&, dy&, 1, dfnr&+1) = CVI(dfdata$, p&+4)
@@ -2384,25 +2585,52 @@ v& = 0
 
   'benutzerdefinierte Meldungen
   IF pCustMsg& > 0 AND MID$(a$, pCustMsg&-3, 4) = "CMSG" THEN
+    'altes (ANSI) Format
     dflen& = CVL(a$, 275)
     IF dflen& > 0 THEN
       dfdata$ = MID$(a$, pCustMsg&+1, dflen&-4)
       p& = 1
       FOR i& = 0 TO %MAXCUSTOMMSG-1
         v& = CVI(dfdata$, p&)
-        customMessages$(0, i&) = MID$(dfdata$, p&+2, v&)
+        customMessages$$(0, i&) = MID$(dfdata$, p&+2, v&)
         p& = p&+2+v&
         v& = CVI(dfdata$, p&)
-        customMessages$(1, i&) = MID$(dfdata$, p&+2, v&)
+        customMessages$$(1, i&) = MID$(dfdata$, p&+2, v&)
         p& = p&+2+v&
+        customMessages$$(2, i&) = ""
       NEXT i&
     END IF
   ELSE
-    REDIM customMessages$(1, %MAXCUSTOMMSG-1)
+    IF pCustMsg& > 0 AND MID$(a$, pCustMsg&-3, 4) = "UMSG" THEN
+      'neues (UNICODE) Format
+      dflen& = CVL(a$, 275)
+      IF dflen& > 3 THEN
+        custMsgUserLang$ = MID$(a$, pCustMsg&+1, 3)
+        editCustomLangCode.Value = custMsgUserLang$
+        dfdata$ = MID$(a$, pCustMsg&+4, dflen&-7)
+        p& = 1
+        FOR i& = 0 TO %MAXCUSTOMMSG-1
+          v& = CVI(dfdata$, p&)
+          customMessages$$(0, i&) = UTF8TOCHR$(MID$(dfdata$, p&+2, v&))
+          p& = p&+2+v&
+          v& = CVI(dfdata$, p&)
+          customMessages$$(1, i&) = UTF8TOCHR$(MID$(dfdata$, p&+2, v&))
+          p& = p&+2+v&
+          v& = CVI(dfdata$, p&)
+          customMessages$$(2, i&) = UTF8TOCHR$(MID$(dfdata$, p&+2, v&))
+          p& = p&+2+v&
+        NEXT i&
+      END IF
+
+    ELSE
+      'keine Einträge vorhanden
+      REDIM customMessages$$(2, %MAXCUSTOMMSG-1)
+    END IF
   END IF
   selectedCustomMsg& = 0
-  editCustomMessageGER.Value = customMessages$(0, selectedCustomMsg&)
-  editCustomMessageENG.Value = customMessages$(1, selectedCustomMsg&)
+  editCustomMessageGER.Value = customMessages$$(0, selectedCustomMsg&)
+  editCustomMessageENG.Value = customMessages$$(1, selectedCustomMsg&)
+  editCustomMessageUserLang.Value = customMessages$$(2, selectedCustomMsg&)
 
 'PRINT FORMAT$(LEN(dfdata$), "0000")+" "+HexString$(LEFT$(dfdata$, 40))
 
@@ -2434,7 +2662,7 @@ END FUNCTION
 
 'Speichert die Mission
 SUB SAVEMISSION(f$)
-  LOCAL mssn$, miss$, actn$, shop$, map$, df$, custmsg$
+  LOCAL mssn$, miss$, actn$, shop$, map$, df$, custmsg$, custmsgUTF8$
   LOCAL i&, j&, v&, v2&, v3&, x&, y&, wd&, hg&, msgid&, shopfile$, g$, dflen$, dfstart$, dfdata$()
   DIM dfdata$(%MAXDFLAYER-1)
 
@@ -2446,7 +2674,12 @@ SUB SAVEMISSION(f$)
   ASC(originalMissData$, 11) = aiMask&
   ASC(originalMissData$, 12) = listboxWinCond.SelectedItem
   ASC(originalMissData$, 16) = listboxTerrain.SelectedItem
-  IF bi2020support& <> 0 THEN ASC(originalMissData$, 297) = listboxBonusmap.SelectedItem
+  IF bi2020support& <> 0 THEN
+    ASC(originalMissData$, 297) = listboxBonusmap.SelectedItem
+    FOR i& = 0 TO %MAXPLAYERS-1
+      MID$(originalMissData$, 23+i&*16, 16) = editPlayerName(i&).Value+SPACE$(16-LEN(editPlayerName(i&).Value))
+    NEXT i&
+  END IF
   msgid& = GETMISSIONBRIEFINGID&
   IF msgid& > 0 THEN ASC(originalMissData$, 294) = msgid&
   MID$(originalMissData$, 17, 6) = allymatrix$
@@ -2490,16 +2723,27 @@ SUB SAVEMISSION(f$)
   map$ = "MAP"+CHR$(0)+actions$
 
   'benutzerdefinierte Meldungen
-  customMessages$(0, selectedCustomMsg&) = editCustomMessageGER.Value
-  customMessages$(1, selectedCustomMsg&) = editCustomMessageENG.Value
+  customMessages$$(0, selectedCustomMsg&) = editCustomMessageGER.Value
+  customMessages$$(1, selectedCustomMsg&) = editCustomMessageENG.Value
+  customMessages$$(2, selectedCustomMsg&) = editCustomMessageUserLang.Value
+  custMsgUserLang$ = TRIM$(editCustomLangCode.Value)
   FOR i& = 0 TO %MAXCUSTOMMSG-1
-    custmsg$ = custmsg$+MKI$(LEN(customMessages$(0, i&)))+customMessages$(0, i&)+MKI$(LEN(customMessages$(1, i&)))+customMessages$(1, i&)
+    IF custMsgUserLang$ = "" THEN
+      custmsg$ = custmsg$+MKI$(LEN(customMessages$$(0, i&)))+customMessages$$(0, i&)+MKI$(LEN(customMessages$$(1, i&)))+customMessages$$(1, i&)
+    ELSE
+      custmsgUTF8$ = CHRTOUTF8$(customMessages$$(0, i&))
+      custmsg$ = custmsg$+MKI$(LEN(custmsgUTF8$))+custmsgUTF8$
+      custmsgUTF8$ = CHRTOUTF8$(customMessages$$(1, i&))
+      custmsg$ = custmsg$+MKI$(LEN(custmsgUTF8$))+custmsgUTF8$
+      custmsgUTF8$ = CHRTOUTF8$(customMessages$$(2, i&))
+      custmsg$ = custmsg$+MKI$(LEN(custmsgUTF8$))+custmsgUTF8$
+    END IF
   NEXT i&
 
   'DFxx (Kartenänderungen) erstellen
   dfLayerCount& = 0
-  wd& = MIN&(64, mapwidth&)
-  hg& = MIN&(64, mapheight&)
+  wd& = MIN&(yMapFactor&, mapwidth&)
+  hg& = MIN&(yMapFactor&, mapheight&)
   FOR i& = 1 TO %MAXDFLAYER
    'Kartenänderungen suchen
     df$ = ""
@@ -2509,7 +2753,7 @@ SUB SAVEMISSION(f$)
           v& = mapdata%(x&, y&, 0, i&)
           v2& = mapdata%(x&, y&, 1, i&)
           v3& = mapdata%(x&, y&, 2, i&)
-          df$ = df$+MKI$(x&+y*64)+MKI$(v&)+MKI$(IIF&(v2& <= 0, -1, v2&))+MKI$(IIF&(v3& <= 0, -1, v3&-1337+256))
+          df$ = df$+MKWRD$(x&+y*yMapFactor&)+MKI$(v&)+MKI$(IIF&(v2& <= 0, -1, v2&))+MKI$(IIF&(v3& <= 0, -1, v3&-1337+256))
         END IF
       NEXT x&
     NEXT y&
@@ -2534,10 +2778,18 @@ SUB SAVEMISSION(f$)
     v& = v&+LEN(dfdata$(i&))+4
     df$ = df$+"DF"+FORMAT$(i&, "00")+dfdata$(i&)
   NEXT i&
-  IF custmsg$ <> STRING$(%MAXCUSTOMMSG*4, 0) THEN
-    df$ = df$+"CMSG"+custmsg$
-    dfstart$ = dfstart$+STRING$(31*4-LEN(dfstart$), 0)+MKL$(v&)
-    dflen$ = dflen$+STRING$(31*4-LEN(dflen$), 0)+MKL$(4+LEN(custmsg$))
+  IF custMsgUserLang$ = "" THEN
+    IF custmsg$ <> STRING$(%MAXCUSTOMMSG*4, 0) THEN
+      df$ = df$+"CMSG"+custmsg$
+      dfstart$ = dfstart$+STRING$(31*4-LEN(dfstart$), 0)+MKL$(v&)
+      dflen$ = dflen$+STRING$(31*4-LEN(dflen$), 0)+MKL$(4+LEN(custmsg$))
+    END IF
+  ELSE
+    IF custmsg$ <> STRING$(%MAXCUSTOMMSG*3, 0) THEN
+      df$ = df$+"UMSG"+custMsgUserLang$+custmsg$
+      dfstart$ = dfstart$+STRING$(31*4-LEN(dfstart$), 0)+MKL$(v&)
+      dflen$ = dflen$+STRING$(31*4-LEN(dflen$), 0)+MKL$(4+LEN(custmsg$))
+    END IF
   END IF
   mssn$ = mssn$+dfstart$+STRING$(128-LEN(dfstart$), 0)
   mssn$ = mssn$+dflen$+STRING$(128-LEN(dflen$), 0)
@@ -2548,9 +2800,9 @@ SUB SAVEMISSION(f$)
   missionFileName$ = f$
 
   'Shopnamen speichern
-  shop$ = CHR$(13,10)+"#0000:0000{"+UCASE$(editMapDescription.Value)+"}"+CHR$(13,10)+"#0001:0024{"+UCASE$(editMapShortDescr.Value)+"}"+CHR$(13,10)
+  shop$ = CHR$(13,10)+"#0000:0000{"+UCASEBI2$(editMapDescription.Value)+"}"+CHR$(13,10)+"#0001:0024{"+UCASEBI2$(editMapShortDescr.Value)+"}"+CHR$(13,10)
   FOR i& = 0 TO nshops&-1
-    IF shops(i&).unittype = 1 AND shops(i&).nameindex > 0 THEN shop$ = shop$+"#"+FORMAT$(i&+2, "0000")+":0016{"+UCASE$(shopnames$(i&))+"}"+CHR$(13,10)
+    IF shops(i&).unittype = 1 AND shops(i&).nameindex > 0 THEN shop$ = shop$+"#"+FORMAT$(i&+2, "0000")+":0024{"+UCASEBI2$(shopnames$(i&))+"}"+CHR$(13,10)
   NEXT i&
   REPLACE "Ä" WITH CHR$(142) IN shop$
   REPLACE "Ö" WITH CHR$(153) IN shop$
@@ -2640,20 +2892,34 @@ END FUNCTION
 
 
 
+'Text in Großbuchstaben konvertieren falls Battle Isle 2020 Features ausgeschaltet sind
+FUNCTION UCASEBI2$(a$)
+  IF bi2020support& = 0 THEN
+    UCASEBI2$ = UCASE$(a$)
+  ELSE
+    UCASEBI2$ = a$
+  END IF
+END FUNCTION
+
+
+
 'Neue Karte erzeugen
 SUB CREATEMAP(x&, y&, terrain&)
   LOCAL i&, j&
 
   originalMissData$ = ""
+  allymatrix$ = STRING$(6, 0)
   actions$ = ""
   nshops& = 0
   mapwidth& = x&
   mapheight& = y&
+  yMapFactor& = IIF&(x& > 64 OR y& > 64, 256, 64)
   REDIM mapdata%(x&-1, y&-1, 2, %MAXDFLAYER)
 
-  REDIM customMessages$(1, %MAXCUSTOMMSG-1)
+  REDIM customMessages$$(2, %MAXCUSTOMMSG-1)
   editCustomMessageGER.Value = ""
   editCustomMessageENG.Value = ""
+  editCustomMessageUserLang.Value = ""
 
   FOR j& = 0 TO y&-1
     FOR i& = 0 TO x&-1
@@ -2705,8 +2971,8 @@ SUB COPYDFLAYER
   IF selectedDF& = 0 THEN EXIT SUB
 
   'unterste Zeile mit DF-Informationen suchen
-  mx& = MIN&(64, mapwidth&)
-  my& = MIN&(64, mapheight&)
+  mx& = MIN&(yMapFactor&, mapwidth&)
+  my& = MIN&(yMapFactor&, mapheight&)
   a$ = STRING$(mx&*2, 0)
   WHILE my& > 0
     IF PEEK$(VARPTR(mapdata%(0, my&-1, 0, selectedDF&)), mx&*2) <> a$ THEN EXIT LOOP
@@ -2747,12 +3013,12 @@ SUB COPYMAP
 
   'Shops im Selektionsbereich suchen
   FOR shopnr& = 0 TO nshops&-1
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
+    shopx& = shops(shopnr&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(shopnr&).position/yMapFactor&)
     IF shopx& >= x0& AND shopx& <= x1& AND shopy& >= y0& AND shopy& <= y1& THEN
       p& = shops(shopnr&).position
       p2& = shops(shopnr&).position2
-      shops(shopnr&).position = (shopy&-y0&)*64+shopx&-x0&
+      shops(shopnr&).position = (shopy&-y0&)*256+shopx&-x0&  'beim Kopieren immer Faktor 256 verwenden, um Shops aus kleinen Maps auch in große kopieren zu können
       shops(shopnr&).position2 = shops(shopnr&).position
       b$ = b$+LEFT$(shopnames$(shopnr&), 32)+SPACE$(32-LEN(shopnames$(shopnr&)))+PEEK$(VARPTR(shops(shopnr&)), SIZEOF(TShop))
       shops(shopnr&).position = p&
@@ -2807,8 +3073,8 @@ SUB PASTEMAP
 
   'existierende Shops im Zielbereich löschen
   FOR shopnr& = nshops&-1 TO 0 STEP -1
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
+    shopx& = shops(shopnr&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(shopnr&).position/yMapFactor&)
     IF shopx& >= mapx& AND shopx& < mapx&+clipwd& AND shopy& >= mapy& AND shopy& < mapy&+cliphg& THEN CALL DELETESHOP(shopnr&)
   NEXT shopnr&
 
@@ -2829,9 +3095,9 @@ SUB PASTEMAP
     CALL INSERTSHOP(0, 0, 1)
     shopnames$(shopnr&) = RTRIM$(MID$(a$, p&, 32))
     POKE$ VARPTR(shops(shopnr&)), MID$(a$, p&+32, SIZEOF(TShop))
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
-    shops(shopnr&).position = (shopx&+mapx&)+(shopy&+mapy&)*64
+    shopx& = shops(shopnr&).position AND 255
+    shopy& = INT(shops(shopnr&).position/256)  'beim Kopieren immer Faktor 256 verwenden, um Shops aus kleinen Maps auch in große kopieren zu können
+    shops(shopnr&).position = (shopx&+mapx&)+(shopy&+mapy&)*yMapFactor&
     shops(shopnr&).position2 = shops(shopnr&).position
     p& = p&+32+SIZEOF(TShop)
     shopnr& = shopnr&+1
@@ -2856,8 +3122,8 @@ SUB PASTEDFLAYER(a$)
   a$ = HexToAsc$(MID$(a$, 3))
   wd& = ASC(a$, 1)
   hg& = ASC(a$, 2)
-  IF wd& > mapwidth& OR wd& > 64 THEN EXIT SUB
-  IF hg& > mapheight& OR hg& > 64 THEN EXIT SUB
+  IF wd& > mapwidth& OR wd& > yMapFactor& THEN EXIT SUB
+  IF hg& > mapheight& OR hg& > yMapFactor& THEN EXIT SUB
   CALL SAVEUNDO
 
   'DF-Layer einfügen
@@ -2945,7 +3211,7 @@ END SUB
 SUB INSERTSHOP(x&, y&, tp&)
   LOCAL i&, owner&, sprnr&
 
-  IF nshops& = %MAXSHOPS OR x& > 63 OR y& > 63 THEN EXIT SUB
+  IF nshops& = %MAXSHOPS OR x& >= yMapFactor& OR y& >= yMapFactor& THEN EXIT SUB
 
   sprnr& = SPRITETOUNIT&(mapdata%(x&, y&, 2, 0))
   owner& = 64  'neutral
@@ -2955,8 +3221,8 @@ SUB INSERTSHOP(x&, y&, tp&)
   shops(nshops&).unittype = 1
   shops(nshops&).shoptype = tp&
   shops(nshops&).shopfunction = GETSHOPFUNCTION&(tp&)
-  shops(nshops&).position = x&+y&*64
-  shops(nshops&).position2 = x&+y&*64
+  shops(nshops&).position = x&+y&*yMapFactor&
+  shops(nshops&).position2 = x&+y&*yMapFactor&
   shops(nshops&).nameindex = IIF&(sprnr& >= 0 AND sprnr& < 64, 0, 9999)
   FOR i& = 0 TO 15
     shops(nshops&).content(i&) = -1
@@ -3034,11 +3300,11 @@ END SUB
 'AI-Point einfügen
 SUB INSERTAIPOINT(x&, y&)
 
-  IF nshops& = %MAXSHOPS OR x& > 63 OR y& > 63 THEN EXIT SUB
+  IF nshops& = %MAXSHOPS OR x& >= yMapFactor& OR y& >= yMapFactor& THEN EXIT SUB
 
   POKE$ VARPTR(shops(nshops&)), STRING$(SIZEOF(TShop), 0)
   shops(nshops&).unittype = 2
-  shops(nshops&).position = x&+y&*64
+  shops(nshops&).position = x&+y&*yMapFactor&
   nshops& = nshops&+1
 END SUB
 
@@ -3084,6 +3350,8 @@ SUB INSERTACTION(btn&)
       v& = w&
       w& = tmp&-3
       tp& = 12
+    CASE 9:  'Team kontrolliert alle HQs
+      tp& = 26
     END SELECT
     pl& = 0
 
@@ -3133,18 +3401,24 @@ SUB INSERTACTION(btn&)
     category& = 0
     tp& = 19
 
+  CASE 11:  'lokales Wetter
+    category& = 0
+    tp& = 27
+    tmp& = listboxParam3.SelectedItem
+    w& = MIN&(w&, tmp&)+MAX(w&, tmp&)*256
+
   END SELECT
 
   'Aktion erzeugen
   a$ = STRING$(40, 0)
-  ASC(a$, 1) = category&
-  ASC(a$, 3) = turnnr&
-  ASC(a$, 5) = movenr&
-  ASC(a$, 7) = pl&
-  ASC(a$, 8) = tp&
-  MID$(a$, 13, 2) = MKI$(v&)
-  ASC(a$, 15) = w&
-  ASC(a$, 17) = newally&
+  ASC(a$, 1) = category&          'category
+  MID$(a$, 3, 2) = MKI$(turnnr&)  'turn
+  MID$(a$, 5, 2) = MKI$(movenr&)  'movement
+  ASC(a$, 7) = pl&                'player
+  ASC(a$, 8) = tp&                'actiontype
+  MID$(a$, 13, 2) = MKI$(v&)      'actionparam
+  MID$(a$, 15, 2) = MKWRD$(w&)    'shop
+  ASC(a$, 17) = newally&          'newally
   actions$ = actions$+a$
 
   CALL SORTACTIONS
@@ -3187,11 +3461,13 @@ SUB LISTBOXITEMCHANGED(lbx&)
     CALL CREATEMAP(listboxWidth.SelectedItem*4+16, listboxHeight.SelectedItem*4+16, defaultTerrain&)
 
   CASE listboxCustomMessages.ID  'benutzerdefinierte Meldungen
-    customMessages$(0, selectedCustomMsg&) = editCustomMessageGER.Value
-    customMessages$(1, selectedCustomMsg&) = editCustomMessageENG.Value
+    customMessages$$(0, selectedCustomMsg&) = editCustomMessageGER.Value
+    customMessages$$(1, selectedCustomMsg&) = editCustomMessageENG.Value
+    customMessages$$(2, selectedCustomMsg&) = editCustomMessageUserLang.Value
     selectedCustomMsg& = listboxCustomMessages.SelectedItem
-    editCustomMessageGER.Value = customMessages$(0, selectedCustomMsg&)
-    editCustomMessageENG.Value = customMessages$(1, selectedCustomMsg&)
+    editCustomMessageGER.Value = customMessages$$(0, selectedCustomMsg&)
+    editCustomMessageENG.Value = customMessages$$(1, selectedCustomMsg&)
+    editCustomMessageUserLang.Value = customMessages$$(2, selectedCustomMsg&)
   END SELECT
 END SUB
 
@@ -3459,7 +3735,7 @@ SUB UPDATEMAP(x&, y&, lv&, sprnr&)
     IF tp& > 0 THEN CALL INSERTSHOP(x&, y&, tp&)
   END IF
 
-  IF selectedDF& = 0 OR x& < 64 OR y& < 64 THEN
+  IF selectedDF& = 0 OR x& < yMapFactor& OR y& < yMapFactor& THEN
     mapdata%(x&, y&, lv&, selectedDF&) = sprnr&  'DF-Layer sind nur in den oberen linken 64x64 Feldern gültig
     IF selectedDF& > 0 THEN
       IF lv& <> 0 AND mapdata%(x&, y&, 0, selectedDF&) = 0 THEN mapdata%(x&, y&, 0, selectedDF&) = -1
@@ -3761,14 +4037,24 @@ END SUB
 'Mission testen
 SUB LAUNCHMAP
   LOCAL r&, f$, gamepath$
+  LOCAL gameapp&
+  LOCAL fname AS ASCIIZ*512, fargs AS ASCIIZ*512, directory AS ASCIIZ*512
 
   IF mapwidth& = 0 THEN EXIT SUB
-  IF misFolder$ = "" OR ISFOLDER(misFolder$) = 0 THEN
+
+  'ermitteln, mit welchem Programm die Mission getestet werden soll
+  IF isBI3& <> 0 THEN
+    gameapp& = 3
+  ELSE
+    IF bi2020support& <> 0 AND bi2020folder$ <> "" OR ISFILE(bi2020folder$+"bi2020.exe") <> 0 THEN gameapp& = 2020 ELSE gameapp& = 2
+  END IF
+  IF gameapp& < 2020 AND (misFolder$ = "" OR ISFOLDER(misFolder$) = 0) THEN
     r& = MessageBox(hWIN&, GETWORD$(%WORDSTART_ERROR+1), GETWORD$(%WORDSTART_ERROR+0), %MB_OK OR %MB_ICONERROR)
     EXIT SUB
   END IF
 
-  IF isBI3& = 0 THEN
+  SELECT CASE gameapp&
+  CASE 2:
     'Mission als AMPORGE speichern
     f$ = missionFileName$
     CALL SAVEMISSION(misFolder$+"MISS000.DAT")
@@ -3778,7 +4064,8 @@ SUB LAUNCHMAP
 
     'Battle Isle II starten
     r& = SHELL(EXEPATH$+"DOSBox\DOSBox.exe "+EXEPATH$+"BI2\BI2.BAT -conf "+EXEPATH$+"DOSBox\bi2ed.conf -noconsole -exit")
-  ELSE
+
+  CASE 3:
     'Mission als MISS100 speichern
     f$ = missionFileName$
     CALL SAVEMISSION(misFolder$+"MISS100.DAT")
@@ -3791,7 +4078,23 @@ SUB LAUNCHMAP
     IF gamepath$ <> "" THEN
       r& = SHELL(gamepath$+"SDI_1R.EXE")
     END IF
-  END IF
+
+  CASE 2020:
+    'Mission speichern falls noch nicht geschehen
+    IF missionFileName$ = "" OR mapChanged& <> 0 THEN
+      f$ = SAVEDIALOG$
+      IF f$ = "" THEN EXIT SUB
+      CALL SAVEMISSION(f$)
+    END IF
+
+    'Battle Isle 2020 starten
+    fname = bi2020folder$+"bi2020.exe"
+    f$ = missionFileName$
+    REPLACE " " WITH "+" IN f$
+    fargs = "/TESTMAP "+f$
+    directory = bi2020folder$
+    r& = ShellExecute(BYVAL %NULL, "open", fname, fargs, directory, %SW_SHOW)
+  END SELECT
 END SUB
 
 
@@ -3981,8 +4284,8 @@ SUB DRAWSHOP(shopnr&)
     '73 = 1..2
     '75 = 6..10
   ELSE
-    shopx& = shops(shopnr&).position AND 63
-    shopy& = INT(shops(shopnr&).position/64)
+    shopx& = shops(shopnr&).position AND (yMapFactor&-1)
+    shopy& = INT(shops(shopnr&).position/yMapFactor&)
     IF shopx& >= 0 AND shopx& < mapwidth& AND shopy& >= 0 AND shopy& < mapheight& THEN
       sprnr& = SPRITETOUNIT&(mapdata%(shopx&, shopy&, 2, 0))
       IF sprnr& >= 0 AND sprnr& < 64 THEN shopnames$(shopnr&) = unitnames$(sprnr&)+" "+FORMAT$(shopnr&+1)
@@ -4235,7 +4538,11 @@ SUB DRAWMAPPROPERTIES
   D2D.GraphicPrint(GETWORD$(%WORDSTART_PROPERTIES+4), palettearea.left+2, allyarea.top-25, brushBlack&, hBUTTONFONT&)
   '
   FOR i& = 0 TO %MAXPLAYERS-1
-    D2D.GraphicPrint(GETWORD$(%WORDSTART_ACTIONSCREEN+1)+" "+FORMAT$(i&+1), palettearea.left+2, allyarea.top-1+i&*20, playerRGB&(i&), hBUTTONFONT&)
+    IF bi2020support& <> 0 THEN
+      editPlayerName(i&).Visible = 1
+    ELSE
+      D2D.GraphicPrint(GETWORD$(%WORDSTART_ACTIONSCREEN+1)+" "+FORMAT$(i&+1), palettearea.left+2, allyarea.top-1+i&*20, playerRGB&(i&), hBUTTONFONT&)
+    END IF
     v& = ASC(allymatrix$, i&+1)
     FOR j& = 0 TO 5
       IF (v& AND (2^j&)) <> 0 THEN
@@ -4279,9 +4586,18 @@ SUB DRAWMAPPROPERTIES
     D2D.GraphicBox(custommessagesarea.left, custommessagesarea.top-24, custommessagesarea.right, custommessagesarea.top-1, brushHighlightedTab&, brushHighlightedTab&)
     D2D.GraphicLine(custommessagesarea.left-1, custommessagesarea.top-1, custommessagesarea.right+1, custommessagesarea.top-1, brushBorder&)
     D2D.GraphicPrint(GETWORD$(%WORDSTART_PROPERTIES+8), custommessagesarea.left+2, custommessagesarea.top-20, brushBlack&, hBUTTONFONT&)
+    D2D.GraphicPrint(GETWORD$(%WORDSTART_PROPERTIES+9), custommessagesarea.left+2, custommessagesarea.top+4, brushBlack&, hBUTTONFONT&)
+    D2D.GraphicPrint(GETWORD$(%WORDSTART_PROPERTIES+10), custommessagesarea.left+2, custommessagesarea.top+124, brushBlack&, hBUTTONFONT&)
+    D2D.GraphicPrint(GETWORD$(%WORDSTART_PROPERTIES+11), custommessagesarea.left+2, custommessagesarea.top+244, brushBlack&, hBUTTONFONT&)
+    a$ = GETWORD$(%WORDSTART_PROPERTIES+12)
+    D2D.GraphicTextSize(a$, hBUTTONFONT&, textwidth&, textheight&)
+    D2D.GraphicPrint(a$, custommessagesarea.right-50-textwidth&, custommessagesarea.top+244, brushBlack&, hBUTTONFONT&)
     listboxCustomMessages.Visible = 1
     editCustomMessageGER.Visible = 1
     editCustomMessageENG.Visible = 1
+    editCustomMessageUserLang.Visible = 1
+    editCustomLangCode.Visible = 1
+    editCustomMessageUserLang.Enabled = LEN(TRIM$(editCustomLangCode.Value)) = 3
   END IF
 END SUB
 
@@ -4325,6 +4641,13 @@ SUB DRAWACTIONDIALOG
   listboxAction.Visible = 1
   listboxParam1.Visible = 1
   listboxParam2.Visible = 1
+  IF listboxAction.SelectedItem = 11 THEN
+    listboxParam3.Visible = 1
+    listboxParam2.Width = 60
+  ELSE
+    listboxParam3.Visible = 0
+    listboxParam2.Width = 122
+  END IF
 END SUB
 
 
@@ -4349,7 +4672,7 @@ SUB DRAWACTION(actionnr&, y&)
   pl& = ASC(actions$, actionnr&*40+7)
   tp& = ASC(actions$, actionnr&*40+8)
   v& = CVI(actions$, actionnr&*40+13)
-  shopnr& = ASC(actions$, actionnr&*40+15)
+  shopnr& = CVWRD(actions$, actionnr&*40+15)
   newally& = ASC(actions$, actionnr&*40+17)
 
   'Runde und Bewegung
@@ -4362,7 +4685,7 @@ SUB DRAWACTION(actionnr&, y&)
   CASE 0:  'normal
     D2D.GraphicPrint(IIF$(tp& <= nactiontypes&, actiontype$(tp&-1), "???"), actionarea.left+130, y&, cl&, hBUTTONFONT&)
   CASE 48:  'Siegbedingung
-    D2D.GraphicPrint(GETWORD$(%WORDSTART_ACTIONLIST+IIF&(tp& >= 21, 7, 2)), actionarea.left+130, y&, cl&, hBUTTONFONT&)
+    D2D.GraphicPrint(GETWORD$(%WORDSTART_ACTIONLIST+IIF&(tp& >= 21 AND tp& < 26, 7, 2)), actionarea.left+130, y&, cl&, hBUTTONFONT&)
   CASE 80:  'Niederlagenbedingung
     D2D.GraphicPrint(GETWORD$(%WORDSTART_ACTIONLIST+3), actionarea.left+130, y&, cl&, hBUTTONFONT&)
   END SELECT
@@ -4427,6 +4750,10 @@ SUB DRAWACTION(actionnr&, y&)
     t$ = GETWORD$(%WORDSTART_ACTIONSCREEN+1)+" "+FORMAT$(v&+1)+ " "+GETWORD$(%WORDSTART_ACTIONSCREEN+15)
   CASE 24:  'Einheit überlebt
     t$ = GETWORD$(%WORDSTART_ACTIONSCREEN+16)+" "+IIF$(v& >= 0 AND v& < 64, unitnames$(v&), FORMAT$(v&))
+  CASE 26:  'Team kontrolliert alle HQs
+    t$ = GETWORD$(%WORDSTART_ACTIONSCREEN+18)+" "+GETWORD$(%WORDSTART_VICTORYCONDITION+9)
+  CASE 27:  'lokales Wetter
+    IF v& >= 0 AND v& <= 4 THEN t$ = GETWORD$(%WORDSTART_WEATHER+v&)+" "+GETWORD$(%WORDSTART_ACTIONSCREEN+17)+" "+FORMAT$(shopnr& AND 255)+"-"+FORMAT$(INT(shopnr&/256)) ELSE t$ = FORMAT$(v&)
   CASE ELSE:
     t$ =  FORMAT$(v&)
   END SELECT
@@ -4438,7 +4765,9 @@ SUB DRAWACTION(actionnr&, y&)
   WEND
   D2D.GraphicPrint(t$, x&, y&, cl&, hBUTTONFONT&)
 
-  DATA "?1", "Wetter", "Nachricht", "DF Layer", "?5", "?6", "Allianz", "Sieg", "Sieg", "?10", "?11", "?12", "?13", "?14", "?15", "?16", "DF-Layer:1", "DF-Layer:2", "DF-Layer:3", "Nachricht", "Bonusmission"
+  DATA "?1", "Wetter", "Nachricht", "DF Layer", "?5", "?6", "Allianz", "Sieg", "Sieg", "?10"
+  DATA "?11", "?12", "?13", "?14", "?15", "?16", "DF-Layer:1", "DF-Layer:2", "DF-Layer:3", "Nachricht"
+  DATA "Bonusmission", "Bonusmission", "Bonusmission", "Bonusmission", "Bonusmission", "Sieg", "Wetter"
 END SUB
 
 
@@ -4555,7 +4884,7 @@ SUB VALIDATEMAP
   FOR i& = 0 TO nshops&-1
     IF shops(i&).shopfunction <> 2 THEN
       IF shops(i&).production(0) > 0 OR shops(i&).production(1) > 0 OR shops(i&).production(2) > 0 OR shops(i&).production(3) > 0 THEN
-        CALL ADDVALIDATIONMSG(shopnames$(i&)+" "+GETWORD$(%WORDSTART_VALIDATION+2), shops(i&).position AND 63, INT(shops(i&).position/64))
+        CALL ADDVALIDATIONMSG(shopnames$(i&)+" "+GETWORD$(%WORDSTART_VALIDATION+2), shops(i&).position AND (yMapFactor&-1), INT(shops(i&).position/yMapFactor&))
       END IF
     END IF
   NEXT i&
@@ -4564,7 +4893,7 @@ SUB VALIDATEMAP
   FOR i& = 0 TO nshops&-2
     FOR k& = i&+1 TO nshops&-1
       IF shops(i&).position = shops(k&).position THEN
-        CALL ADDVALIDATIONMSG(shopnames$(i&)+" "+GETWORD$(%WORDSTART_VALIDATION+3)+" "+shopnames$(k&), shops(i&).position AND 63, INT(shops(i&).position/64))
+        CALL ADDVALIDATIONMSG(shopnames$(i&)+" "+GETWORD$(%WORDSTART_VALIDATION+3)+" "+shopnames$(k&), shops(i&).position AND (yMapFactor&-1), INT(shops(i&).position/yMapFactor&))
       END IF
     NEXT k&
   NEXT i&
@@ -4717,6 +5046,15 @@ END SUB
 
 
 
+'Cursortasten gedrückt
+SUB KEYBOARDMOVE(x&, y&)
+  'Karte scrollen
+  scrollX& = MAX&(0, MIN&(mapwidth&*16*zoom#-maparea.right+maparea.left+8*zoom#, scrollX&+x&*zoom#*16))
+  scrollY& = MAX&(0, MIN&(mapheight*24*zoom#-maparea.bottom+maparea.top+12*zoom#, scrollY&+y&*zoom#*16))
+END SUB
+
+
+
 'Button gedrückt
 SUB BUTTONPRESSED(btn&)
   LOCAL f$
@@ -4725,6 +5063,7 @@ SUB BUTTONPRESSED(btn&)
   CASE buttonNew.ID:  'neue Karte
     IF SAVEQUERY& = 2 THEN EXIT SUB
     CALL HIDEDIALOGUES(0)
+    CALL INITNEWMAPDIALOGUE
     showWelcome& = 0
     selectedTab& = -4
 
@@ -4799,6 +5138,22 @@ SUB ENABLEBI2020
   IF ISOBJECT(listboxAction) THEN
     listboxAction.SetItems(CREATELISTBOXITEMS$(%WORDSTART_ACTIONLIST, IIF&(bi2020support& = 0, 6, 11)))
   END IF
+END SUB
+
+
+
+'Dialog für neue Karte initialisieren
+SUB INITNEWMAPDIALOGUE
+  LOCAL a$, i&
+
+  a$ = "16;20;24;28;32;36;40;44;48;52;56;60;64"
+  IF bi2020support& <> 0 THEN
+    FOR i& = 68 TO 256 STEP 4
+      a$ = a$+";"+FORMAT$(i&)
+    NEXT i&
+  END IF
+  listboxWidth.SetItems(a$)
+  listboxHeight.SetItems(a$)
 END SUB
 
 
@@ -5073,7 +5428,15 @@ END SUB
 
 'Mausrad verarbeiten
 SUB MOUSEWHEEL(v#)
-  zoom# = MAX(0.25, MIN(6.0, zoom#+v#*0.25))
+  LOCAL wd&, hg&, newZoom#, oldZoom#
+
+  newZoom# = zoom#+v#*0.25
+  oldZoom# = zoom#
+  wd& = (maparea.right-maparea.left)/2
+  hg& = (maparea.bottom-maparea.top)/2
+  zoom# = MAX(IIF(yMapFactor& = 64, 1.0, 0.25), MIN(6.0, newZoom#))
+  scrollX& = MAX&(0, MIN&(mapwidth&*16*zoom#-maparea.right+maparea.left+8*zoom#, (scrollX&+wd&)/oldZoom#*zoom#-wd&))
+  scrollY& = MAX&(0, MIN&(mapheight&*24*zoom#-maparea.bottom+maparea.top+12*zoom#, (scrollY&+hg&)/oldZoom#*zoom#-hg&))
 END SUB
 
 
@@ -5113,6 +5476,10 @@ SUB KEYPRESS(k$)
   CASE CHR$(19): CALL BUTTONPRESSED(buttonSave.ID)  'Speichern
   CASE CHR$(22): CALL PASTEMAP
   CASE CHR$(26): CALL UNDOEDIT
+  CASE CHR$(0, 72): CALL KEYBOARDMOVE(0, -1)
+  CASE CHR$(0, 75): CALL KEYBOARDMOVE(-1, 0)
+  CASE CHR$(0, 77): CALL KEYBOARDMOVE(1, 0)
+  CASE CHR$(0, 80): CALL KEYBOARDMOVE(0, 1)
   CASE CHR$(0, 82):
     CALL CREATESHOPATCURSORPOS
   CASE CHR$(0, 83):
@@ -5188,6 +5555,7 @@ SUB RESIZEWIN(wd&, hg&)
   listboxAction.XPos = newactionarea.left+250
   listboxParam1.XPos = newactionarea.left+250
   listboxParam2.XPos = newactionarea.left+250
+  listboxParam3.XPos = newactionarea.left+312
   listboxNextmap.XPos = aimaskarea.left+40
   listboxBonusmap.XPos = aimaskarea.left+40
   editMapDescription.XPos = mapdescriptionarea.left+3
@@ -5195,11 +5563,20 @@ SUB RESIZEWIN(wd&, hg&)
   listboxCustomMessages.XPos = custommessagesarea.right-140
   editCustomMessageGER.XPos = custommessagesarea.left+3
   editCustomMessageENG.XPos = custommessagesarea.left+3
+  editCustomMessageUserLang.XPos = custommessagesarea.left+3
+  editCustomLangCode.XPos = custommessagesarea.right-43
+  FOR i& = 0 TO %MAXPLAYERS-1
+    editPlayerName(i&).XPos = palettearea.left+2
+  NEXT i&
 
   'Einstellungen verschieben
   radiogroupLanguage.XPos = languagearea.left
   checkboxReopen.XPos = generaloptionsarea.left
   checkboxBI2020.XPos = generaloptionsarea.left
+
+  'Neue Karte verschieben
+  listboxWidth.XPos = newmaparea.left+65
+  listboxHeight.XPos = newmaparea.left+260
 END SUB
 
 
@@ -5207,6 +5584,10 @@ END SUB
 'Taste gedrückt oder losgelassen
 SUB KEYEVENT(k&, md&)
   LOCAL mapx&, mapy&
+  LOCAL c AS IDXCONTROL
+
+  c = D2D.GetFocusedControl()
+  IF ISOBJECT(c) THEN EXIT SUB
 
   SELECT CASE k&
   CASE 42:  'SHIFT
@@ -5332,19 +5713,35 @@ END FUNCTION
 
 
 
+'Kommandozeilenargumente verarbeiten
+SUB ProcessCommandLineArgs
+  LOCAL c$, cmd$, arg$, p&
+
+  c$ = TRIM$(COMMAND$)
+  p& = INSTR(c$, " ")
+  IF p& > 0 THEN
+    cmd$ = UCASE$(LEFT$(c$, p&-1))
+    arg$ = LTRIM$(MID$(c$, p&+1))
+    IF cmd$ = "-MAPFROMGIF" THEN CALL CreateMapFromGif(arg$)
+  END IF
+END SUB
+
+
+
 'Hauptprogramm
 FUNCTION PBMAIN&
   LOCAL e$, cfg&, k&
   LOCAL msgtext AS ASCIIZ*512
   LOCAL Built AS IPOWERTIME
-  DIM undoData$(%MAXUNDOLEVELS-1), shops(%MAXSHOPS-1), shopnames$(%MAXSHOPS-1), gpm?(12, 1)
-  DIM validateMessages$(%MAXVALIDATE-1), validatex&(%MAXVALIDATE-1), validatey&(%MAXVALIDATE-1), customMessages$(1, %MAXCUSTOMMSG-1)
+  DIM undoData$(%MAXUNDOLEVELS-1), shops(%MAXSHOPS-1), shopnames$(%MAXSHOPS-1), gpm?(12, 1), editPlayerName(%MAXPLAYERS-1)
+  DIM validateMessages$(%MAXVALIDATE-1), validatex&(%MAXVALIDATE-1), validatey&(%MAXVALIDATE-1), customMessages$$(2, %MAXCUSTOMMSG-1)
   DIM debugdata$(99)
 
   EXEPATH$ = EXE.PATH$
   IF AfxGetWindowsVersion => 6 THEN SetProcessDPIAware
   cfg& = READCONFIG&
   CALL CheckBIVersion
+  yMapFactor& = 64
 
   LET Built = CLASS "PowerTime"
   Built.FileTime = %PB_COMPILETIME
@@ -5363,12 +5760,16 @@ FUNCTION PBMAIN&
   CALL INITCONTROLS
   CALL INITOBJECTPALETTE  'Shops definieren, damit diese in LOADSPRITES$ korrekt eingefärbt werden
 
+  CALL ProcessCommandLineArgs
+
 'CALL COMPAREDEBUGDATA("MISS")
 
-  IF missionFileName$ <> "" AND ISFILE(missionFileName$) THEN
-    CALL LOADMISSION&(missionFileName$)
-  ELSE
-    showWelcome& = 1
+  IF mapCreatedFromGif& = 0 THEN
+    IF missionFileName$ <> "" AND ISFILE(missionFileName$) THEN
+      CALL LOADMISSION&(missionFileName$)
+    ELSE
+      showWelcome& = 1
+    END IF
   END IF
 
   highlightedButton& = -1
