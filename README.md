@@ -98,6 +98,18 @@ Daniel Bekowies - sourcerer@kitana.org
 v1.008 / 13-July-2021
 * Added support for Battle Isle 3
 
+v1.021 / 13-August-2023
+* Maps with size up to 256x256 tiles
+* User-defined player names for the AI
+* Local weather (weather changes that affect only a part of the map)
+* Cut scenes
+* 30 DF-layers instead of 10
+* up to 256 actions
+* up to 10 missions on the same map
+* use CTRL + left-click to draw on the map without smoothing
+* Support for custom units and terrain
+* Added scrollbars to all object palettes
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the LICENSE.md file for details
